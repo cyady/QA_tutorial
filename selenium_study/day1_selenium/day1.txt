@@ -1,0 +1,80 @@
+Selenium WebDriver
+----------------------
+What is WebDriver?
+-> WebDriver is One of the component in selenium.
+-> WebDriver is module
+
+firefox browser -----> Firefox()
+Chrome Browser ---> Chrome ()
+Edge-> Edge()
+---
+---
+
+-> WebDriver is an API (Application Programming Interface)
+
+Architecture of WebDriver
+-------------------------
+Selenium3
+-----
+Selenium Language bindings --JSON Wire protocol ---> Browser drivers --- w3c--> Brosers
+
+Selenium4
+-----
+Selenium Language bindings --w3c ---> Browser drivers---w3c--> Browser
+
+Setup & configure WebDriver in Pycharm
+----------------------------------------
+Pre-requisites:
+----------------
+    Python
+    Pychamp
+1) Download browser specific driver using below link
+https://pypi.org/project/selenium/
+
+Once you download, extract .zip files then you will see .exe files (they are drivers)
+
+2) setup selenium webdriver
+    Approach#1
+    a. Pycharm  --> projects setting
+    b. pip install selenium - for beta version-> + version
+    Approach#2
+    project seting '+', serch selenium
+
+Webdriver is a module which is available in selenium package.
+프로젝트에 셀레니움 웹 드라이버를 셋업
+
+
+TC1
+---------
+1) Open Web Brower( Chrome/firefox/IE )
+2) Open URL https://opensource-demo.orangehrmlive.com
+3) Provide username (Admin)
+4) Provide password (admin123)
+5) Click on login
+6) Capture title of the home page.(Actual title)
+7) Verify title of the page: OrangeHRM (Expected)
+8) close browser
+
+
+
+
+TC2
+-------
+1) Open Web Brower( Chrome/firefox/IE )
+2) Open URL https://admin-demo.nopcommerce.com/login
+3) Provide Email (admin@yourstore.com)
+4) Provide password (admin)
+5) Click on login
+6) Capture title of the dashboard page.(Actual title)
+7) Verify title of the page: "Dashboard / nopCommerce administration" (Expected)
+8) close browser
+
+
+
+
+
+
+
+
+
+
