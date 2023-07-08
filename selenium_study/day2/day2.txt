@@ -1,0 +1,59 @@
+day2
+---------------
+Locators
+---------------
+
+Identify element
+action
+
+id name linktext partiallinktext
+셀레니움 웹드라이버에서 지원하는 일반 로케이터이므로 모든 항목에 엑세스 가능
+css, xpath -> xml 또는 html의 코드에서 참고해야함
+css 선택기 등을 사용해서 xpath를 생성해야함
+
+tagname은 때로는 스팸, 셀렉트 등을 불리기도한다.
+
+<element attribute = value attribute2 = value2>
+<input name = "txtUsername" id = "txtUsername" type="text">
+
+ex)
+<input class="oxd-input oxd-input--active" name="username" placeholder="Username" autofocus="" data-v-1f99f73c="">
+이 요소에 접근하기 위해서는 적절한 어티리뷰트를 선택해야한다.
+driver.find_element(by.name, "username")
+
+<input id = 'sddsd' name = 'sadasd' > Name: </input>(인풋 엘리멘트 닫기)
+Name:
+<a href ="link"> register </a>(앵커태그 닫기)
+register는 링크텍스트
+
+partiallinktext는 링크텍스트를 일부만 입력한다.
+
+유니크해서 단일한 요소를 찾을 수 있음
+id
+name
+linktext
+partiallinktext
+
+하나 이상의 요소를 찾을 수 있음
+classname
+tagname
+
+ex1) 슬라이드 쇼 파일 등
+sliders= driver.find_elements(By.CLASS_NAME, "homeslider-dontainer")
+print(len(sliders))
+ex2)
+links=driver.find_elements(By.TAG_NAME,"a")
+print(len(links))
+find_element
+첫번째 링크만 반환한다.
+find_elements
+여러 링크를 반환한다.
+
+CSS Selector Xpath는 사용자 설정 Locator이다.
+
+CSS Selectors
+-------------
+1. tag id
+2. tag class
+3. tag attribute
+4. tag class attribute

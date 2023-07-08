@@ -54,6 +54,9 @@ driver.close()
 # driver.find_element_by_id("password").send_keys("admin123")
 # driver.find_element_by_name("Login").click()
 
+#selenium
+# pip install webdriver_manager
+
 
 
 
