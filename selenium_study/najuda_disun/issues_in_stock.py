@@ -11,7 +11,10 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
+import pyautogui
 import pyperclip, time
+import os
+
 
 week = datetime.today().weekday()   # 월 = 0, 일 = 6
 
@@ -38,7 +41,7 @@ driver.maximize_window()
 
 id_define = "cyady"
 pw_define = "canemorte4!"
-#자동로그인 방지에 막힘
+#자동로그인 방지에 막힘 복붙으로 접근해야함
 
 
 
@@ -50,55 +53,126 @@ elem_id = driver.find_element(By.ID, "id")
 elem_id.click()
 pyperclip.copy(id_define)
 elem_id.send_keys(Keys.CONTROL, 'v')
-time.sleep(1)
+time.sleep(0.1)
 #
 elem_pw = driver.find_element(By.ID, "pw")
 elem_pw.click()
 pyperclip.copy(pw_define)
 elem_pw.send_keys(Keys.CONTROL, 'v')
-time.sleep(1)
+time.sleep(0.1+0.12)
 #
 driver.find_element(By.ID, "log.login").click()
 # login done
 
 driver.execute_script('window.open("https://cafe.naver.com/ca-fe/cafes/29798500/members/dT13403RZ-ERPYhWwNk69A#");')  #구글 창 새 탭으로 열기
 time.sleep(1)
+driver.implicitly_wait(10)
 driver.switch_to.window(driver.window_handles[-1])  #새로 연 탭으로 이동
+driver.implicitly_wait(10)
 
+driver.find_element(By.XPATH, "/html/body/div/div/div[1]/div/div[1]/button").click()
+time.sleep(0.1)
+N1=10 #to the article
+N2=10 # to filedownload
 
-
-N1=6 #to the article
-N2=11 # to filedownload
 actions = ActionChains(driver)
 for i in range(N1):
     actions.send_keys(Keys.TAB)
-    print(i)
-actions.perform()
+    actions.perform()
+    time.sleep(1/N1)
+    # print(i)
 
 actions.send_keys(Keys.ENTER)
 actions.perform()
 
-driver.implicitly_wait(5)
+driver.implicitly_wait(10)
 driver.switch_to.window(driver.window_handles[2])
-time.sleep(3)
+# time.sleep(3)
 
-html = driver.page_source
-soup = BeautifulSoup(html, 'html.parser')
-print(soup)
+# html = driver.page_source
+# soup = BeautifulSoup(html, 'html.parser')
+# print(soup)
 print(driver.current_url)
-driver.save_screenshot('screenshot.png')
+driver.save_screenshot('screenshot.png')    #알아서 덮어 쓰는것으로 보인다.
 
-driver.find_element(By.ID, "writerInfoeltjsl88").click()
-for i in range(N2):
-    actions.send_keys(Keys.TAB)
-    print(i)
-actions.perform()
+#메타태그로 인해 요소 팔로우가 불가능하다는걸 알게됨
+# <META NAME="ROBOTS" CONTENT="NOINDEX, NOFOLLOW">
+driver.execute_script("window.scrollTo(1190, 410)")
+
+# 클릭하면 move_to_element(target)동작이 자연스럽게 이루어지는 것으로 추정
+driver.find_element(By.ID, "topLayerQueryInput").click()
+print("clicked1")
+time.sleep(1)
+
+target = driver.find_element(By.ID, "topLayerQueryInput")
+s_target=target.location
+print("start flag : ", s_target)
+
+# s_H=driver.execute_script("return document.body.scrollHeight")
+# print(s_H)
+s_Y=driver.execute_script("return window.pageYOffset")
+print(s_Y)
+# s_X=driver.execute_script("return window.pageXOffset")
+# print(s_X)
+x=int(s_target['x'])
+y=int(s_target['y'])
+
+print("x,y = ", x,y)
+
+# time.sleep(5)
+print("want Mouse Position : ", pyautogui.position())
+
+
+pyautogui.moveTo(s_target['x']+232, s_target['y']-10, duration=0.1) #그냥 좌표로 한방에 이동, 화면에서 검색창이 차지하는 위치 기준
+pyautogui.click()
+print("current Mouse Position : ", pyautogui.position())
+# 마우스를 타겟 위치로 움직일 수 없었음 이미 위라서?
+# actions.move_to_element(target).move_by_offset(x,y).click().perform()
+print("clicked2")
+#
+# for i in range(N2):
+#     actions.send_keys(Keys.TAB)
+#     actions.perform()
+#     time.sleep(2/N2)
+#     print(i)
+# print("tabs")
+#
+# for i in range(50):
+#     time.sleep(1)
+#     print("current Mouse Position : ", pyautogui.position())
+
+
+#
+# actions.send_keys(Keys.ENTER)
+# actions.perform()
 
 actions.send_keys(Keys.TAB)
 actions.perform()
+
 actions.send_keys(Keys.ENTER)
 actions.perform()
+
+
+print("enter")
 print("file downloaded")
+
+time.sleep(2)
+driver.quit()
+
+forder_path = r'C:\Users\cyady\Downloads\\'
+print(forder_path)
+each_file_path_and_gen_t = []
+for each_file_name in os.listdir(forder_path):
+    print(each_file_name)
+    each_file_path = forder_path+each_file_name
+    each_file_gen_time = os.path.getctime(each_file_path)
+    # getctime: 입력받은 경로에 대한 생성 시간을 리턴
+    each_file_path_and_gen_t.append(
+        (each_file_path, each_file_gen_time)
+    )
+# 가장 생성시각이 큰(가장 최근인) 파일을 리턴
+most_recent_file = max(each_file_path_and_gen_t, key=lambda x : x[1])[0]
+print(most_recent_file)
 
 
 #

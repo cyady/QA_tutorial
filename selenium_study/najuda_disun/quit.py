@@ -11,6 +11,6 @@ Chrome_Options.add_experimental_option("detach", True)  #브라우저 꺼짐 방
 driver.implicitly_wait(2)
 
 driver = webdriver.Chrome(options=Chrome_Options, service=Service(ChromeDriverManager().install()))
-driver.maximize_window()
 
 driver.quit()
+driver.
