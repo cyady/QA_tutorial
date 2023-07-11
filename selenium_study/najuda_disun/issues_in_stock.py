@@ -123,7 +123,7 @@ print("x,y = ", x,y)
 print("want Mouse Position : ", pyautogui.position())
 
 
-pyautogui.moveTo(s_target['x']+232, s_target['y']-10, duration=0.1) #그냥 좌표로 한방에 이동, 화면에서 검색창이 차지하는 위치 기준
+pyautogui.moveTo(s_target['x']+230, s_target['y']-10, duration=0.1) #그냥 좌표로 한방에 이동, 화면에서 검색창이 차지하는 위치 기준
 pyautogui.click()
 print("current Mouse Position : ", pyautogui.position())
 # 마우스를 타겟 위치로 움직일 수 없었음 이미 위라서?

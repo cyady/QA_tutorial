@@ -13,4 +13,3 @@ driver.implicitly_wait(2)
 driver = webdriver.Chrome(options=Chrome_Options, service=Service(ChromeDriverManager().install()))
 
 driver.quit()
-driver.
