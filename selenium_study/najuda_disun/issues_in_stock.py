@@ -10,21 +10,33 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
 from datetime import datetime, timedelta
-from bs4 import BeautifulSoup
+from shutil import copy, move
 import pyautogui
 import pyperclip, time
-import os
-
+import os, sys, filetransfer
 
 week = datetime.today().weekday()   # 월 = 0, 일 = 6
 
-if week ==0: #sunday
+if week ==0: #monday
     delta = 3
+
+if week ==5: # saturday
+    delta = 1
+if week==6: # sunday
+    delta = 2
 else:
-    delta =1
+    delta = 1
+
+if datetime.today().hour >= 19:
+    delta -=1
 
 #--------------
 yesm = datetime.today() - timedelta(delta)
+
+id_define = input("네이버 id : ")
+pw_define = input("네이버 pw : ")
+user = input("사용자 윈도우 계정(다운로드 폴더 접근) : ")
+aime_i = input("1:default , not 1:점검중")
 
 mark = "."
 today = str(yesm.month) + mark + str(yesm.day) + " 특징주"
@@ -39,8 +51,10 @@ driver.implicitly_wait(2)
 driver = webdriver.Chrome(options=Chrome_Options, service=Service(ChromeDriverManager().install()))
 driver.maximize_window()
 
-id_define = "cyady"
-pw_define = "canemorte4!"
+# id_define = "cyady"
+# pw_define = "Canemorte4@"
+
+
 #자동로그인 방지에 막힘 복붙으로 접근해야함
 
 
@@ -71,15 +85,15 @@ driver.switch_to.window(driver.window_handles[-1])  #새로 연 탭으로 이동
 driver.implicitly_wait(10)
 
 driver.find_element(By.XPATH, "/html/body/div/div/div[1]/div/div[1]/button").click()
+driver.find_element(By.XPATH, "/html/body/div/div/div[1]/div/div[1]/button").click()
 time.sleep(0.1)
-N1=10 #to the article
+N1=5 #to the article
 N2=10 # to filedownload
 
 actions = ActionChains(driver)
 for i in range(N1):
     actions.send_keys(Keys.TAB)
     actions.perform()
-    time.sleep(1/N1)
     # print(i)
 
 actions.send_keys(Keys.ENTER)
@@ -87,20 +101,25 @@ actions.perform()
 
 driver.implicitly_wait(10)
 driver.switch_to.window(driver.window_handles[2])
+driver.implicitly_wait(10)
+time.sleep(1)
+
 # time.sleep(3)
 
 # html = driver.page_source
 # soup = BeautifulSoup(html, 'html.parser')
 # print(soup)
 print(driver.current_url)
-driver.save_screenshot('screenshot.png')    #알아서 덮어 쓰는것으로 보인다.
+# driver.save_screenshot('screenshot.png')    #알아서 덮어 쓰는것으로 보인다.
 
 #메타태그로 인해 요소 팔로우가 불가능하다는걸 알게됨
 # <META NAME="ROBOTS" CONTENT="NOINDEX, NOFOLLOW">
 driver.execute_script("window.scrollTo(1190, 410)")
+driver.implicitly_wait(10)
 
 # 클릭하면 move_to_element(target)동작이 자연스럽게 이루어지는 것으로 추정
 driver.find_element(By.ID, "topLayerQueryInput").click()
+driver.implicitly_wait(10)
 print("clicked1")
 time.sleep(1)
 
@@ -119,11 +138,14 @@ y=int(s_target['y'])
 
 print("x,y = ", x,y)
 
-# time.sleep(5)
+time.sleep(5)
 print("want Mouse Position : ", pyautogui.position())
 
-
-pyautogui.moveTo(s_target['x']+230, s_target['y']-10, duration=0.1) #그냥 좌표로 한방에 이동, 화면에서 검색창이 차지하는 위치 기준
+if aime_i !=1:
+    aim = -19+171
+else:
+    aim = -19
+pyautogui.moveTo(s_target['x']+230, s_target['y']+aim, duration=0.01) #그냥 좌표로 한방에 이동, 화면에서 검색창이 차지하는 위치 기준
 pyautogui.click()
 print("current Mouse Position : ", pyautogui.position())
 # 마우스를 타겟 위치로 움직일 수 없었음 이미 위라서?
@@ -145,6 +167,21 @@ print("clicked2")
 #
 # actions.send_keys(Keys.ENTER)
 # actions.perform()
+time.sleep(0.2)
+actions.send_keys(Keys.TAB)
+actions.perform()
+
+actions.send_keys(Keys.ENTER)
+actions.perform()
+
+time.sleep(2)   #다운완료 후 리턴이 올때까지 sleep이면 좋을듯
+pyautogui.click()
+
+actions.send_keys(Keys.TAB)
+actions.perform()
+
+actions.send_keys(Keys.TAB)
+actions.perform()
 
 actions.send_keys(Keys.TAB)
 actions.perform()
@@ -152,28 +189,79 @@ actions.perform()
 actions.send_keys(Keys.ENTER)
 actions.perform()
 
-
 print("enter")
 print("file downloaded")
 
 time.sleep(2)
 driver.quit()
 
-forder_path = r'C:\Users\cyady\Downloads\\'
+forder_path = 'C:' + '\\Users\\'+ user + '\\Downloads\\'
+print("forder_path : " , forder_path)
+Tofolder = './DB'
 print(forder_path)
 each_file_path_and_gen_t = []
 for each_file_name in os.listdir(forder_path):
-    print(each_file_name)
     each_file_path = forder_path+each_file_name
     each_file_gen_time = os.path.getctime(each_file_path)
     # getctime: 입력받은 경로에 대한 생성 시간을 리턴
     each_file_path_and_gen_t.append(
         (each_file_path, each_file_gen_time)
     )
+    # print(each_file_path_and_gen_t)
 # 가장 생성시각이 큰(가장 최근인) 파일을 리턴
-most_recent_file = max(each_file_path_and_gen_t, key=lambda x : x[1])[0]
-print(most_recent_file)
 
+
+
+def removeff(path):
+    if os.path.isfile(path):
+        os.remove(path)
+
+    return 'copied'
+
+print("--------------")
+
+most_recent_file = sorted(each_file_path_and_gen_t, key=lambda x : x[1], reverse=True)
+print(most_recent_file)
+most_recent_file_fi = str(most_recent_file[0][0])
+most_recent_file_se = str(most_recent_file[1][0])
+file_path_extension_fi = os.path.splitext(most_recent_file_fi)[1]
+file_path_name_fi = os.path.splitext(most_recent_file_fi)[0]
+name_fi = str(most_recent_file[0][0])
+name_se = str(most_recent_file[1][0])
+file_path_extension_se = os.path.splitext(most_recent_file_se)[1]
+file_path_name_se = os.path.splitext(most_recent_file_se)[0]
+
+print(file_path_name_fi, file_path_extension_fi)
+print(file_path_name_se, file_path_extension_se)
+
+try:
+    if(name_fi == '특징주DB.xlsm'):    # 첫번째가 DB
+        removeff(Tofolder + file_path_name_fi)
+        copy(most_recent_file_fi, Tofolder)
+        removeff(most_recent_file_fi)
+        removeff(most_recent_file_se)
+        print("first - DB")
+        time.sleep(2)
+        sys.exit()
+    if(name_se == '특징주DB.xlsm'):    # 두번째가 DB
+        removeff(Tofolder + "\\" + file_path_name_se)
+        copy(most_recent_file_se, Tofolder)
+        removeff(most_recent_file_fi)
+        removeff(most_recent_file_se)
+        print("second - DB")
+        time.sleep(2)
+        sys.exit
+    else:     # 첫번째도 두번째도 DB가 아님 == 첫번째가 DB임
+        #파일변환
+        fpp = filetransfer.changeHWP(name_fi, forder_path)
+        print("fpp_path : ", fpp)
+        removeff(Tofolder + fpp.split('\\')[3])
+        move(fpp, Tofolder)
+        print(move)
+        removeff(most_recent_file_fi)
+
+finally:
+    print("DONE")
 
 #
 # driver.find_element(By.ID, "menuLink226").click()

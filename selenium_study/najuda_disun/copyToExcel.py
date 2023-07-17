@@ -2,14 +2,18 @@
 #pip install python-docx
 #pip install pywin32
 import time
-
+from issues_in_stock import yesm,name_fi, removeff
 from docx import Document
-import win32com.client, os
+import win32com.client, os, pyautogui
 
 from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 from docx.enum.style import WD_STYLE_TYPE
+this_program_directory = os.path.dirname(os.path.abspath(__file__))
+os.chdir(this_program_directory)
 
-doc = Document(r"C:\Users\cyady\Downloads\7.10특징주 (2).docx")    #day_docx
+document_path = './DB\\' + name_fi.split('\\')[4].replace("hwp", "docx")
+print(document_path)
+doc = Document(document_path)    #day_docx
 
 # for i, paragraph in enumerate(doc.paragraphs):
 #     print(str(i+1) + ":" + paragraph.text)
@@ -18,22 +22,28 @@ table_first = doc.tables[0] #특징주
 table_second = doc.tables[1] #시간외
 
 impact = []
+impact_i=0
 for r in table_first.rows:
     data_list_first = []
     for cell in r.cells:
         for para in cell.paragraphs:
             # print(para.text)
             data_list_first.append(para.text)
-    # print(', '.join(data_list_first))
-    impact.append(data_list_first)
+    if impact_i !=0:
+        impact.append(data_list_first)
+    else:
+        impact_i+=1
 
 for i in impact:
+    i.insert(0, '정규장')
     for j in i:
         print(j, end="|")
     print()
 print()
 print("----------------")
 print()
+
+
 over_t = []
 for row in table_second.rows:
     data_list_second = []
@@ -45,40 +55,74 @@ for row in table_second.rows:
     over_t.append(data_list_second)
 
 for i in over_t:
+    i.insert(0, '시간외')
     for j in i:
         print(j, end="|")
     print()
 
-
-# print(data_list_second)
 # 데이터를 잘 긁어오는것을 확인완료
 
 
-#
-# excel = win32com.client.Dispatch("Excel.Application")
-# excel.Visible = True
-#
-# # wb = excel.Workbooks.Add()  #엑셀 프로그램에 Workbook 추가(객체 생성)
-# wb = excel.Workbooks.Open("C:\\Users\\cyady\\Desktop\\증권\\자료모음\\특징주 DB\\특징주DB.xlsm")
-#
-# # ws1 = wb.ActiveSheet -  현재 활성화 되어있는 시트를 객체로 설정
+
+excel = win32com.client.Dispatch("Excel.Application")
+excel.Visible = True
+print("os.getcwd", os.getcwd())
+excel_file = this_program_directory+'\\DB' + '\\특징주DB.xlsm'
+print("excel_path : ", excel_file)
+# wb = excel.Workbooks.Add()  #엑셀 프로그램에 Workbook 추가(객체 생성)
+os.chdir(this_program_directory)
+wb = excel.Workbooks.Open(excel_file)
+
+# ws1 = wb.ActiveSheet -  현재 활성화 되어있는 시트를 객체로 설정
 #
 # ws_temp = wb.Worksheets.Add()
 # ws_temp.NAME = "TEMP_today"
-#
-# ws_DB = wb.Worksheets("특징주DB")  #-시트 이름으로 객체 설정
-# ws_DB.Select()
-# time.sleep(0.1)
-#
-# data_range = ws_DB.UsedRange()
-#
-# for i in data_range:
-#     row_data = []
-#     for j in i:
-#         cell_value = j
-#         row_data.append(str(cell_value))
-#         # print(row_data[0])
-#     print(', '.join(row_data))
-#     if(row_data[0] > str(20230710)):
-#         time.sleep(3)
-#
+##
+# ws_temp.cells(1.1).Value = impact[]
+index0 = str(yesm.year) + str(yesm.month) + str(yesm.day)
+def copycells(ia, ib, array):
+    a = ia
+    for i in array:
+        b = ib
+        for j in i:
+            ws_DB.cells(a, b).Value = str(j)
+            ws_DB.cells(a, ib-2).Value = index0
+            b += 1
+        a += 1
+    return a
+
+##
+# ws_temp.Delete()
+
+
+ws_DB = wb.Worksheets("특징주DB")  #-시트 이름으로 객체 설정
+ws_DB.Select()
+time.sleep(0.1)
+
+data_range = ws_DB.UsedRange()
+alpha=1
+beta=1
+for i in data_range:
+
+    row_data = []
+    for j in i:
+        cell_value = j
+        row_data.append(str(cell_value))
+        # print(row_data[0])
+    print(', '.join(row_data))
+    alpha +=1
+    beta = row_data[0]
+    if(row_data[1] < '0'):
+        break
+print(alpha)
+first_tabel=copycells(alpha-1, 3, impact)
+copycells(first_tabel,3,over_t)
+save_path = this_program_directory + '\\DB'
+wb.SaveAs(save_path + "/특징주DB.xlsm")
+
+pyautogui.press('left')
+pyautogui.press("{ENTER}")
+
+removeff(document_path)
+
+
