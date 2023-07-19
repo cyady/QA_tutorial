@@ -1,7 +1,3 @@
-#pip install webdriver-manager
-#pip install lxml
-#pip install html_parser
-
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -13,7 +9,7 @@ from datetime import datetime, timedelta
 from shutil import copy, move
 import pyautogui
 import pyperclip, time
-import os, sys, filetransfer
+import os, sys, filetransfer, getpass
 
 week = datetime.today().weekday()   # 월 = 0, 일 = 6
 
@@ -35,9 +31,9 @@ yesm = datetime.today() - timedelta(delta)
 
 id_define = input("네이버 id : ")
 pw_define = input("네이버 pw : ")
-user = input("사용자 윈도우 계정(다운로드 폴더 접근) : ")
-aime_i = input("1:default , not 1:점검중")
-
+# user = input("사용자 윈도우 계정(다운로드 폴더 접근) : ")
+user = getpass.getuser()
+print( "user :", user)
 mark = "."
 today = str(yesm.month) + mark + str(yesm.day) + " 특징주"
 print(today)
@@ -50,9 +46,6 @@ driver.implicitly_wait(2)
 
 driver = webdriver.Chrome(options=Chrome_Options, service=Service(ChromeDriverManager().install()))
 driver.maximize_window()
-
-# id_define = "cyady"
-# pw_define = "Canemorte4@"
 
 
 #자동로그인 방지에 막힘 복붙으로 접근해야함
@@ -127,12 +120,10 @@ target = driver.find_element(By.ID, "topLayerQueryInput")
 s_target=target.location
 print("start flag : ", s_target)
 
-# s_H=driver.execute_script("return document.body.scrollHeight")
-# print(s_H)
+
 s_Y=driver.execute_script("return window.pageYOffset")
 print(s_Y)
-# s_X=driver.execute_script("return window.pageXOffset")
-# print(s_X)
+
 x=int(s_target['x'])
 y=int(s_target['y'])
 
@@ -141,32 +132,13 @@ print("x,y = ", x,y)
 time.sleep(5)
 print("want Mouse Position : ", pyautogui.position())
 
-if aime_i !=1:
-    aim = -19+171
-else:
-    aim = -19
-pyautogui.moveTo(s_target['x']+230, s_target['y']+aim, duration=0.01) #그냥 좌표로 한방에 이동, 화면에서 검색창이 차지하는 위치 기준
+
+pyautogui.moveTo(s_target['x']+230, s_target['y']-19, duration=0.01) #그냥 좌표로 한방에 이동, 화면에서 검색창이 차지하는 위치 기준
 pyautogui.click()
 print("current Mouse Position : ", pyautogui.position())
-# 마우스를 타겟 위치로 움직일 수 없었음 이미 위라서?
-# actions.move_to_element(target).move_by_offset(x,y).click().perform()
+
 print("clicked2")
-#
-# for i in range(N2):
-#     actions.send_keys(Keys.TAB)
-#     actions.perform()
-#     time.sleep(2/N2)
-#     print(i)
-# print("tabs")
-#
-# for i in range(50):
-#     time.sleep(1)
-#     print("current Mouse Position : ", pyautogui.position())
 
-
-#
-# actions.send_keys(Keys.ENTER)
-# actions.perform()
 time.sleep(0.2)
 actions.send_keys(Keys.TAB)
 actions.perform()
@@ -203,13 +175,9 @@ each_file_path_and_gen_t = []
 for each_file_name in os.listdir(forder_path):
     each_file_path = forder_path+each_file_name
     each_file_gen_time = os.path.getctime(each_file_path)
-    # getctime: 입력받은 경로에 대한 생성 시간을 리턴
     each_file_path_and_gen_t.append(
         (each_file_path, each_file_gen_time)
     )
-    # print(each_file_path_and_gen_t)
-# 가장 생성시각이 큰(가장 최근인) 파일을 리턴
-
 
 
 def removeff(path):
@@ -262,10 +230,3 @@ try:
 
 finally:
     print("DONE")
-
-#
-# driver.find_element(By.ID, "menuLink226").click()
-# driver.find_element(By.PARTIAL_LINK_TEXT, today).click()
-# driver.fin_element(By.XPATH, "/html/body/div/div/div/div[2]/div[2]/div[1]/div[1]/a").click()
-# driver.fin_element(By.XPATH, "/html/body/div/div/div/div[2]/div[2]/div[1]/div[1]/div/ul/li/div[1]/span").click
-

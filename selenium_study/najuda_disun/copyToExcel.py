@@ -1,13 +1,16 @@
 #엑셀에 붙여넣기
 #pip install python-docx
 #pip install pywin32
+#pip install pywinauto
+#pip install webdriver-manager
+#pip install lxml
+#pip install html_parser
+
 import time
 from issues_in_stock import yesm,name_fi, removeff
 from docx import Document
-import win32com.client, os, pyautogui
+import win32com.client, os
 
-from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
-from docx.enum.style import WD_STYLE_TYPE
 this_program_directory = os.path.dirname(os.path.abspath(__file__))
 os.chdir(this_program_directory)
 
@@ -15,8 +18,6 @@ document_path = './DB\\' + name_fi.split('\\')[4].replace("hwp", "docx")
 print(document_path)
 doc = Document(document_path)    #day_docx
 
-# for i, paragraph in enumerate(doc.paragraphs):
-#     print(str(i+1) + ":" + paragraph.text)
 
 table_first = doc.tables[0] #특징주
 table_second = doc.tables[1] #시간외
@@ -73,13 +74,8 @@ print("excel_path : ", excel_file)
 os.chdir(this_program_directory)
 wb = excel.Workbooks.Open(excel_file)
 
-# ws1 = wb.ActiveSheet -  현재 활성화 되어있는 시트를 객체로 설정
-#
-# ws_temp = wb.Worksheets.Add()
-# ws_temp.NAME = "TEMP_today"
-##
-# ws_temp.cells(1.1).Value = impact[]
-index0 = str(yesm.year) + str(yesm.month) + str(yesm.day)
+
+index0 = str(yesm.year) + str(yesm.month).zfill(2) + str(yesm.day).zfill(2)
 def copycells(ia, ib, array):
     a = ia
     for i in array:
@@ -118,11 +114,8 @@ print(alpha)
 first_tabel=copycells(alpha-1, 3, impact)
 copycells(first_tabel,3,over_t)
 save_path = this_program_directory + '\\DB'
-wb.SaveAs(save_path + "/특징주DB.xlsm")
-
-pyautogui.press('left')
-pyautogui.press("{ENTER}")
-
 removeff(document_path)
+
+wb.SaveAs(save_path + "/특징주DB.xlsm")
 
 

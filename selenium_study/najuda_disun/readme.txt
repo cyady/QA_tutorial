@@ -1,7 +1,9 @@
-정기적으로 올라오는 게시글의 첨부파일 다운로드 - 성공
-한글파일의 데이터를 추출하여 엑셀에 붙여넣기 - 한글이 설치되어 있지 않기 때문에 문제가 발생함
-내부 데이터를 디코딩하면 계속 중간에 잘린다. - 이거에 대한 해결법은 다음에 찾아보는걸로하고 다른 방법을 활용해보는걸로
-spy++와 pywinauto, subprocess를 활용해서 자동으로 파일 변환해서 진행하는 방향으로 전환
+#pip install python-docx
+#pip install pywin32
+#pip install pywinauto
+#pip install webdriver-manager
+#pip install lxml
+#pip install html_parser
 
-on going
+네이버카페 점검중이면 마우스 좌표 달라져서 불가능, 포멧 변경시에도 불가능
 

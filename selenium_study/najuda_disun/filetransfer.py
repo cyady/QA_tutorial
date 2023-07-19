@@ -1,8 +1,7 @@
-#pip install pywinauto
-#pip install chardet    - 인코딩 정보 찾기
+
 
 from pywinauto import application, findwindows, keyboard
-import pyperclip, time, re, chardet, os
+import pyperclip, time, os
 
 def removeff(path):
     if os.path.isfile(path):
@@ -59,41 +58,4 @@ def changeHWP(name_fi, forder_path):
     removeff(dir_hwp + '\\' +name_fi)
     return day_docx
 
-
-
-#
-# from docx import Document
-# #r"C:\Users\cyady\Downloads\7.10특징주 (2).docx"
-# doc = Document(day_docx)
-#
-# table_first = doc.tables[0]
-# table_second = doc.tables[1]
-#
-#
-# for row in table_first.rows:
-#     data_list_first = []
-#     for cell in row.cells:
-#         for para in cell.paragraphs:
-#             # print(para.text)
-#             data_list_first.append(para.text)
-#     print(', '.join(data_list_first))
-#
-#
-# for row in table_second.rows:
-#     data_list_second = []
-#     for cell in row.cells:
-#         for para in cell.paragraphs:
-#             # print(para.text)
-#             data_list_second.append(para.text)
-#     print(', '.join(data_list_second))
-#
-# print(data_list_second)
-# # 데이터를 잘 긁어오는것을 확인완료
-#
-
 #데이터를 리스트에 채우기
-
-
-
-
-
