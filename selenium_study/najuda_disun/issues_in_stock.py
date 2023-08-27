@@ -29,8 +29,10 @@ if datetime.today().hour >= 19:
 #--------------
 yesm = datetime.today() - timedelta(delta)
 
-id_define = input("네이버 id : ")
-pw_define = input("네이버 pw : ")
+# id_define = input("네이버 id : ")
+id_define = "cyady"
+# pw_define = input("네이버 pw : ")
+pw_define = "Canemorte4@"
 # user = input("사용자 윈도우 계정(다운로드 폴더 접근) : ")
 user = getpass.getuser()
 print( "user :", user)
@@ -44,8 +46,14 @@ driver=webdriver.Chrome()
 Chrome_Options.add_experimental_option("detach", True)  #브라우저 꺼짐 방지
 driver.implicitly_wait(2)
 
-driver = webdriver.Chrome(options=Chrome_Options, service=Service(ChromeDriverManager().install()))
-driver.maximize_window()
+try:
+    driver = webdriver.Chrome(options=Chrome_Options, service=Service(ChromeDriverManager().install()))
+    print("used, ChromeDriverManager")
+except:
+    driver = webdriver.Chrome(options=Chrome_Options, service=Service(r"C:\Users\cyady\Desktop\project\QA\QA_tutorial\drivers\chromedriver-win64\chromedriver.exe"))
+    print("used, path of driver")
+finally:
+    driver.maximize_window()
 
 
 #자동로그인 방지에 막힘 복붙으로 접근해야함
