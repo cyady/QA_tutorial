@@ -12,6 +12,10 @@ import streamlit as st
 
 
 APP_DIR = Path(__file__).resolve().parent
+WORKSPACE_DIR = APP_DIR.parent
+REPO_ROOT = WORKSPACE_DIR.parent
+AGENT_A_DIR = WORKSPACE_DIR / "agent_a"
+SCHEMA_GENERATOR_DIR = WORKSPACE_DIR / "schema_generator"
 DATA_DIR = APP_DIR / "data"
 DECISIONS_DIR = DATA_DIR / "decisions"
 DECISIONS_DIR.mkdir(parents=True, exist_ok=True)
@@ -19,13 +23,40 @@ LAST_INPUTS_PATH = DATA_DIR / "last_inputs.json"
 WS_RE = re.compile(r"\s+")
 
 
+def repo_rel(path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT))
+    except Exception:
+        return str(path)
+
+
+def resolve_user_path(path: str, prefer_base: Path | None = None) -> Path:
+    raw = (path or "").strip()
+    p = Path(raw).expanduser()
+    if p.is_absolute():
+        return p
+
+    bases: list[Path] = []
+    for base in (Path.cwd(), prefer_base, WORKSPACE_DIR, REPO_ROOT):
+        if base is None or base in bases:
+            continue
+        bases.append(base)
+
+    for base in bases:
+        candidate = (base / p).resolve()
+        if candidate.exists():
+            return candidate
+
+    return ((prefer_base or WORKSPACE_DIR) / p).resolve()
+
+
 def read_json(path: str) -> Any:
-    p = Path(path)
+    p = resolve_user_path(path)
     return json.loads(p.read_text(encoding="utf-8-sig"))
 
 
 def read_json_or_jsonl(path: str) -> Any:
-    p = Path(path)
+    p = resolve_user_path(path)
     text = p.read_text(encoding="utf-8-sig").strip()
     if not text:
         return None
@@ -183,14 +214,14 @@ def field_option_label(field_id: str, field_map: dict[str, dict[str, Any]]) -> s
 
 
 def suggest_fn_output_path(candidate_pool_path: str) -> str:
-    p = Path(candidate_pool_path)
+    p = resolve_user_path(candidate_pool_path)
     stem = p.stem
-    return str(Path("schema_generator/output") / f"{stem}_fn_review_input.json")
+    return repo_rel(SCHEMA_GENERATOR_DIR / "output" / f"{stem}_fn_review_input.json")
 
 
 def _path_ok(path_str: str) -> bool:
     s = (path_str or "").strip()
-    return bool(s) and Path(s).exists()
+    return bool(s) and resolve_user_path(s).exists()
 
 
 def load_last_inputs() -> dict[str, str]:
@@ -277,11 +308,23 @@ def app() -> None:
 
     remembered = load_last_inputs()
     path_defaults = {
-        "memo_text_path": remembered.get("memo_text_path", "agent_a/data_w/memo_w1.txt"),
-        "candidate_pool_path": remembered.get("candidate_pool_path", "agent_a/outputs/runs_merged/w1/candidate_pool.jsonl"),
-        "model_output_path": remembered.get("model_output_path", "agent_a/model_output/w1_model_output.json"),
-        "fn_input_path_input": remembered.get("fn_input_path_input", "schema_generator/output/w1_fn_review_input.json"),
-        "effective_schema_path_input": remembered.get("effective_schema_path_input", "schema_generator/output/effective_schema_566552.json"),
+        "memo_text_path": remembered.get("memo_text_path", repo_rel(AGENT_A_DIR / "data_w" / "memo_w1.txt")),
+        "candidate_pool_path": remembered.get(
+            "candidate_pool_path",
+            repo_rel(AGENT_A_DIR / "outputs" / "runs_merged" / "w1" / "candidate_pool.jsonl"),
+        ),
+        "model_output_path": remembered.get(
+            "model_output_path",
+            repo_rel(AGENT_A_DIR / "model_output" / "w1_model_output.json"),
+        ),
+        "fn_input_path_input": remembered.get(
+            "fn_input_path_input",
+            repo_rel(SCHEMA_GENERATOR_DIR / "output" / "w1_fn_review_input.json"),
+        ),
+        "effective_schema_path_input": remembered.get(
+            "effective_schema_path_input",
+            repo_rel(SCHEMA_GENERATOR_DIR / "output" / "effective_schema_566552.json"),
+        ),
         "deal_id_for_schema": remembered.get("deal_id_for_schema", "566552"),
     }
     for k, v in path_defaults.items():
@@ -353,21 +396,21 @@ def app() -> None:
             elif not api_token.strip():
                 st.error("Enter Bearer token.")
             else:
-                out_path = f"schema_generator/output/effective_schema_{deal_id_text}.json"
+                out_path = SCHEMA_GENERATOR_DIR / "output" / f"effective_schema_{deal_id_text}.json"
                 cmd = [
                     sys.executable,
-                    "schema_generator/build_effective_schema_from_deal.py",
+                    str(SCHEMA_GENERATOR_DIR / "build_effective_schema_from_deal.py"),
                     "--deal-id",
                     deal_id_text,
                     "--token",
                     api_token.strip(),
                     "--output",
-                    out_path,
+                    str(out_path),
                 ]
                 try:
                     proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                    st.session_state["pending_effective_schema_path"] = out_path
-                    st.success(f"Generated: {out_path}")
+                    st.session_state["pending_effective_schema_path"] = repo_rel(out_path)
+                    st.success(f"Generated: {repo_rel(out_path)}")
                     if proc.stdout.strip():
                         st.caption(proc.stdout.strip())
                     st.rerun()
@@ -383,35 +426,35 @@ def app() -> None:
             missing = []
             if not memo_ok:
                 missing.append("memo_text path")
-            if not cp or not Path(cp).exists():
+            if not cp or not resolve_user_path(cp).exists():
                 missing.append("candidate_pool path")
-            if not mo or not Path(mo).exists():
+            if not mo or not resolve_user_path(mo).exists():
                 missing.append("model_output path")
-            if not es or not Path(es).exists():
+            if not es or not resolve_user_path(es).exists():
                 missing.append("effective_schema path")
 
             if missing:
                 st.error(f"Missing/invalid required inputs: {', '.join(missing)}")
             else:
-                out_path = suggest_fn_output_path(cp)
+                out_path = resolve_user_path(suggest_fn_output_path(cp), prefer_base=REPO_ROOT)
                 cmd = [
                     sys.executable,
-                    "schema_generator/build_fn_review_input.py",
+                    str(SCHEMA_GENERATOR_DIR / "build_fn_review_input.py"),
                     "--candidate-pool",
-                    cp,
+                    str(resolve_user_path(cp)),
                     "--model-output",
-                    mo,
+                    str(resolve_user_path(mo)),
                     "--effective-schema",
-                    es,
+                    str(resolve_user_path(es)),
                     "--output",
-                    out_path,
+                    str(out_path),
                     "--top-k",
                     str(int(top_k_for_fn)),
                 ]
                 try:
                     proc = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                    st.session_state["pending_fn_input_path"] = out_path
-                    st.success(f"Generated: {out_path}")
+                    st.session_state["pending_fn_input_path"] = repo_rel(out_path)
+                    st.success(f"Generated: {repo_rel(out_path)}")
                     if proc.stdout.strip():
                         st.caption(proc.stdout.strip())
                     st.rerun()
@@ -438,7 +481,7 @@ def app() -> None:
 
     if load_btn or (not st.session_state.loaded) or auto_reload_files:
         try:
-            memo_text = Path(memo_text_path).read_text(encoding="utf-8-sig")
+            memo_text = resolve_user_path(memo_text_path).read_text(encoding="utf-8-sig")
             model_output = fix_mojibake_obj(flatten_model_output(read_json_or_jsonl(model_output_path)))
             fn_rows = load_fn_candidates(fn_input_path)
             effective_schema = read_json(effective_schema_path)

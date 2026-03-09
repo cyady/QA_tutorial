@@ -22,7 +22,7 @@
 ## 3) 후보 생성 규칙
 
 ### 3-1. 하드 추출(코드 기반, 결정적)
-소스: `agent_a/rules/regex_extractors.py`
+소스: `ai_field_mapping/agent_a/agent_a/rules/regex_extractors.py`
 
 - 수치/범위/퍼센트/통화/기간/날짜/이메일/전화/멘션 추출
 - 한국어 수치 정규화(만/억/천만/복합/여)
@@ -38,7 +38,7 @@
   - `개(?!월)` 규칙으로 `개월`을 `개`로 오인식하지 않음
 
 ### 3-2. 소프트 보강(LLM 없이 수동 규칙)
-소스: `agent_a/manual_augment.py`
+소스: `ai_field_mapping/agent_a/agent_a/manual_augment.py`
 
 - 라인 단위 cue 규칙으로 아래 semantic 생성
   - `action_item`, `risk_or_concern`, `constraint`,
@@ -47,7 +47,7 @@
 - confidence는 규칙성 기반 고정값 사용
 
 ## 4) dedupe/merge 규칙
-소스: `agent_a/merge.py`
+소스: `ai_field_mapping/agent_a/agent_a/merge.py`
 
 - hard 후보: `semantic_type + normalized signature`로 dedupe
 - soft 후보: 공백/대소문자 정규화 텍스트 해시로 dedupe

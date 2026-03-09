@@ -14,6 +14,9 @@ DEFAULT_BASE_URL = "https://business-canvas.recatch.cc"
 DEFAULT_API_BASE_URL = "https://api.recatch.cc"
 DEFAULT_VIEW_VERSION = "20250519"
 DEFAULT_LAYOUT_VERSION = "20241114"
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "output"
+DEFAULT_RAW_DIR = DEFAULT_OUTPUT_DIR / "raw"
 
 
 def _headers(token: str, base_url: str) -> dict[str, str]:
@@ -183,11 +186,11 @@ def main() -> None:
     p.add_argument("--layout-version", default=DEFAULT_LAYOUT_VERSION)
     p.add_argument(
         "--output",
-        help="Output effective_schema path. default: schema_generator/output/effective_schema_<deal_id>.json",
+        help="Output effective_schema path. default: <this module>/output/effective_schema_<deal_id>.json",
     )
     p.add_argument(
         "--raw-dir",
-        default="schema_generator/output/raw",
+        default=str(DEFAULT_RAW_DIR),
         help="Directory to store raw API JSON files",
     )
     args = p.parse_args()
@@ -232,9 +235,7 @@ def main() -> None:
         layout_settings=layout_settings,
     )
 
-    out_path = Path(args.output) if args.output else Path(
-        f"schema_generator/output/effective_schema_{args.deal_id}.json"
-    )
+    out_path = Path(args.output) if args.output else DEFAULT_OUTPUT_DIR / f"effective_schema_{args.deal_id}.json"
     _save_json(out_path, effective)
 
     print(
