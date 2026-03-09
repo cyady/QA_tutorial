@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/execution_log.schema.json",
+  "title": "execution_log",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "stage",
+    "created_at",
+    "started_at",
+    "tool_policy",
+    "events"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "stage": { "const": "execution_log" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "ended_at": { "type": ["string", "null"], "format": "date-time" },
+    "hard_timeout_minutes": { "type": "integer", "const": 60 },
+    "tool_policy": {
+      "type": "object",
+      "required": ["vibium_retry_limit_per_action", "devtools_diag_set_limit_per_action", "self_healing_phases"],
+      "properties": {
+        "vibium_retry_limit_per_action": { "type": "integer", "const": 15 },
+        "devtools_diag_set_limit_per_action": { "type": "integer", "const": 5 },
+        "self_healing_phases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["phase", "vibium_retries", "devtools_sets"],
+            "properties": {
+              "phase": { "type": "string" },
+              "vibium_retries": { "type": "integer", "minimum": 0 },
+              "devtools_sets": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timestamp", "action_id", "tool", "status", "attempt"],
+        "properties": {
+          "timestamp": { "type": "string", "format": "date-time" },
+          "case_id": { "type": ["string", "null"] },
+          "action_id": { "type": "string" },
+          "tool": { "type": "string", "enum": ["vibium", "devtools", "orchestrator"] },
+          "status": { "type": "string", "enum": ["success", "fail", "needs_review", "skip"] },
+          "attempt": { "type": "integer", "minimum": 1 },
+          "message": { "type": ["string", "null"] },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/test_case_results.schema.json",
+  "title": "test_case_results",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "stage",
+    "created_at",
+    "summary",
+    "results"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "stage": { "const": "test_case_results" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "summary": {
+      "type": "object",
+      "required": ["total", "pass", "fail", "needs_review"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "pass": { "type": "integer", "minimum": 0 },
+        "fail": { "type": "integer", "minimum": 0 },
+        "needs_review": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "status", "status_reason", "evidence_refs"],
+        "properties": {
+          "case_id": { "type": "string" },
+          "status": { "type": "string", "enum": ["pass", "fail", "needs_review", "skip"] },
+          "status_reason": { "type": "string" },
+          "steps_executed": { "type": "integer", "minimum": 0 },
+          "evidence_refs": { "type": "array", "items": { "type": "string" } },
+          "errors": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

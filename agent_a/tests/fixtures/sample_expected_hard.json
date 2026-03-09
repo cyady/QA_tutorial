@@ -1,0 +1,42 @@
+﻿[
+  {
+    "semantic_type": "budget",
+    "value_type": "currency",
+    "normalized": {"value": 100000000, "currency": "KRW", "approx": true}
+  },
+  {
+    "semantic_type": "team_size",
+    "value_type": "number",
+    "normalized": {"value": 9, "unit": "people", "approx": false}
+  },
+  {
+    "semantic_type": "target_population",
+    "value_type": "number",
+    "normalized": {"value": 74000, "unit": "people", "approx": false}
+  },
+  {
+    "semantic_type": "target_population",
+    "value_type": "number",
+    "normalized": {"value": 17000, "unit": "people", "approx": true}
+  },
+  {
+    "semantic_type": "case_metric",
+    "value_type": "number",
+    "normalized": {"value": 28000, "unit": "cases", "approx": false}
+  },
+  {
+    "semantic_type": "sales_activity",
+    "value_type": "number_range",
+    "normalized": {"min": 4.0, "max": 5.0, "unit": "times"}
+  },
+  {
+    "semantic_type": "match_rate",
+    "value_type": "percentage_range",
+    "normalized": {"min": 0.3, "max": 0.5}
+  },
+  {
+    "semantic_type": "duration",
+    "value_type": "duration",
+    "normalized": {"value": 2.5, "unit": "months", "approx": true}
+  }
+]

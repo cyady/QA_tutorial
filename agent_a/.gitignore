@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+outputs/
+data_w/
+model_output/
+memo.txt
+memo_w1.txt
+*.log

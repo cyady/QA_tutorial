@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+logs/
+data/decisions/
+data/last_inputs.json

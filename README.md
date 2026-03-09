@@ -1,23 +1,31 @@
 # QA_tutorial
 
-## druvers
-셀레니움을 사용시 필요한 웹 드라이버
+QA automation, review tooling, and small operator utilities are curated here as a personal monorepo.
+The goal of this cleanup is to keep reusable projects in Git while excluding local credentials, generated artifacts, and heavy dependency folders.
 
-## selenium_study
-pavan 유튜브 강의를 통한 학습 진행 
-그러나 프로젝트를 통한 학습이 더 즐겁다고 판단하여 선회 결정
-### selenium_study/najuda_disun
-네이버카페 크롤링 프로젝트
-이슈 - 내 컴퓨터에서만 배포 가능, 다른 컴퓨터에 실행파일 배포시 실행이 안됨
-파이썬버전과 관련된 문제로 판단됨 -> 다음프로젝트부터는 파이썬 가상환경을 이용할것!
+## Active Projects
 
-## 무신사
-testcase 작성해보기
-무신사 어플의 추천탭에 대한 테스트케이스 작성
-태블릿 환경에서 다수의 결함 발견하여 제보
+- `agent_a`
+  Candidate-pool extractor that turns memo text into structured `candidate_pool.jsonl`.
+- `schema_generator`
+  Effective-schema and FN review input generators used in the Re:catch QA flow.
+- `qa_review_ui`
+  Streamlit review UI for TP/FP/FN decisions and field-level QA metrics.
+- `SlackBot_for_web`
+  Slack slash-command driven MVP for browser-based web QA orchestration.
 
-## 토치라이트
-게임 토치라이트에 대한 testcase를 작성해보고자함
-그러나 깃허브에 영상업로드가 어려운점, 메크로 코드 작성시 핵유저가 되는점 등
-프로젝트 취소
+## Separate Repositories
 
+- `Codex/codex_QA_Automation`
+  Kept as an independent Git repository with its own remote and release history.
+
+## Repository Rules
+
+- Credentials, local `.env` files, runtime logs, screenshots, and temporary outputs are not committed.
+- Heavy local dependency folders such as `node_modules/`, `.next/`, and virtual environments are ignored at the repo root.
+- Some workspaces remain local-only until they are cleaned up enough to publish.
+
+## Legacy Notes
+
+Older tutorial assets such as `selenium_study/` and `web/` were learning snapshots.
+They are being removed from the curated repository so the remaining history reflects current QA automation work instead of archived practice material.

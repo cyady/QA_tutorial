@@ -1,0 +1,70 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/
+.gemini/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.venv_local/
+*.egg-info/
+
+# JavaScript / frontend
+node_modules/
+.next/
+dist/
+.vite/
+coverage/
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+!.env.test.example
+!.env.prod.example
+**/credentials/*.txt
+!**/credentials/recatch_login.example.txt
+
+# Runtime outputs
+logs/
+**/logs/
+artifacts/
+**/artifacts/
+screenshots/
+**/screenshots/
+*.log
+shot-*.png
+**/shot-*.png
+tmp/
+tmp_*
+
+# Project-specific local outputs
+agent_a/data_w/
+agent_a/model_output/
+agent_a/outputs/
+agent_a/memo.txt
+agent_a/memo_w1.txt
+qa_review_ui/data/decisions/
+qa_review_ui/data/last_inputs.json
+schema_generator/output/
+SlackBot_for_web/tmp_app_dump.txt
+SlackBot_for_web/.gemini/
+SlackBot_for_web/*.docx
+SlackBot_for_web/*.pdf
+
+# Top-level workspaces kept local for now
+Codex/
+naver_cafe_stock_crawler/
+recatch_qa/
+
+# Keep tracked placeholders
+!**/logs/.gitkeep
+!**/screenshots/.gitkeep

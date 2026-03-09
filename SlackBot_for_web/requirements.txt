@@ -1,0 +1,9 @@
+slack-bolt==1.21.2
+python-dotenv~=0.21.0
+google-genai>=1.38.0
+mcp>=1.14.1
+aiohttp>=3.9.5
+openai>=1.50.0
+pydantic>=2.8.0
+langgraph>=0.2.40
+

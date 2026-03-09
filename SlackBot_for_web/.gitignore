@@ -1,0 +1,17 @@
+.env
+.venv/
+.venv_local/
+.gemini/
+artifacts/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.bot.lock
+review_ui/node_modules/
+review_ui/dist/
+review_ui/.vite/
+tmp_app_dump.txt
+*.docx
+*.pdf

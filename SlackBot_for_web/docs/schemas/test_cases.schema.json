@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/schemas/test_cases.schema.json",
+  "title": "test_cases",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_id",
+    "stage",
+    "created_at",
+    "test_cases"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "stage": { "const": "test_cases" },
+    "created_at": { "type": "string", "format": "date-time" },
+    "test_cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "title", "objective", "steps", "expected_result"],
+        "properties": {
+          "case_id": { "type": "string" },
+          "title": { "type": "string" },
+          "objective": { "type": "string" },
+          "target_url": { "type": ["string", "null"] },
+          "preconditions": { "type": "array", "items": { "type": "string" } },
+          "steps": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+          "expected_result": { "type": "string" },
+          "severity_hint": { "type": ["string", "null"], "enum": ["P0", "P1", "P2", "P3", null] },
+          "evidence_requirements": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

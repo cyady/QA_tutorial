@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-a"
+version = "0.1.0"
+description = "Candidate pool extractor for meeting memos"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "pydantic>=2.6",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+agent-a = "agent_a.cli:main"
+agent-a-memo = "agent_a.memo_to_json:main"
+agent-a-csv = "agent_a.csv_to_memo_txt:main"
+agent-a-queue = "agent_a.llm_queue_selector:main"
+agent-a-regen = "agent_a.batch_regenerate:main"
+agent-a-manual = "agent_a.manual_augment:main"
+agent-a-valset = "agent_a.select_validation_set:main"
+
+[tool.setuptools]
+packages = ["agent_a", "agent_a.rules", "agent_a.llm"]
