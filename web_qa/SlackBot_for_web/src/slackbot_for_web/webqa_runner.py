@@ -27,6 +27,7 @@ except Exception:  # noqa: BLE001
     StateGraph = None
 
 from slackbot_for_web.config import Settings
+from slackbot_for_web.memory_index import retrieve_issue_memory_cards
 from slackbot_for_web.models import AgentResult, QaRunRequest
 from slackbot_for_web.presets import FULL_WEB_QA_OUTPUT_SCHEMA, resolve_mode_instruction
 from slackbot_for_web.validation_models import summarize_validation_error, validate_artifact_payload
@@ -89,9 +90,79 @@ MAX_DEEP_CASES_PER_RUN = 4
 VISUAL_PROBE_KINDS = ("scroll_probe", "hover_probe", "clickability_probe")
 MAX_VISUAL_PROBE_CANDIDATES = 2
 MAX_VISUAL_PROBE_SCREENSHOTS_PER_CASE = 6
+MEMORY_RETRIEVAL_TOP_K = 5
 SCHEMA_VERSION = 1
 TRACKING_QUERY_KEYS = {"gclid", "fbclid", "ref", "igshid", "mc_cid", "mc_eid"}
 FULL_WEB_QA_PRESET = "full_web_qa"
+CTA_TEXT_KEYWORDS = (
+    "문의",
+    "상담",
+    "contact",
+    "demo",
+    "start",
+    "trial",
+    "buy",
+    "구매",
+    "시작",
+    "다운로드",
+    "download",
+    "리포트",
+    "report",
+    "자료",
+    "신청",
+    "바로 보기",
+    "바로보기",
+    "보기",
+)
+CTA_CLASS_KEYWORDS = ("cta", "btn", "button", "primary", "download", "report", "hero", "action")
+NAV_KEYWORDS = (
+    "menu",
+    "nav",
+    "about",
+    "pricing",
+    "product",
+    "contact",
+    "company",
+    "service",
+    "previous",
+    "next",
+    "scroll to page",
+)
+HOVER_KEYWORDS = ("menu", "dropdown", "hover", "popover", "tooltip", "mega")
+MEMORY_QUERY_CTA_KEYWORDS = (
+    "문의",
+    "상담",
+    "contact",
+    "demo",
+    "trial",
+    "download",
+    "리포트",
+    "report",
+    "자료",
+    "신청",
+    "바로 보기",
+    "바로보기",
+    "faq",
+)
+MEMORY_ISSUE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
+    "animation_replay": ("애니메이션", "스크롤", "최초", "재실행"),
+    "flicker": ("깜빡", "애니메이션", "스크롤"),
+    "mobile_alignment": ("정렬", "도트", "모바일"),
+    "text_wrap": ("줄바꿈", "가독성", "텍스트"),
+    "share_preview": ("공유", "미리보기", "preview"),
+    "mobile_overlay_depth": ("cta", "폼", "depth", "overlay"),
+    "mobile_media_render": ("동영상", "플레이어", "모바일"),
+    "spacing_layout": ("여백", "간격", "spacing"),
+    "footer_alignment": ("footer", "푸터", "ci", "하단"),
+    "performance_motion": ("성능", "버벅", "끊기"),
+    "close_button": ("닫기", "close", "[x]", "x"),
+    "broken_link": ("링크", "link", "새창", "현재창", "faq"),
+    "image_render": ("이미지", "카드", "브랜드"),
+    "menu_consistency": ("menu", "lnb", "푸터"),
+    "click_affordance": ("hover", "커서", "손가락"),
+    "click_feedback": ("완료", "피드백", "색상", "포커싱"),
+    "responsive_overflow": ("가려짐", "좁아", "작아", "iphone"),
+}
 
 ProviderKind = Literal["gemini", "openai"]
 
@@ -320,6 +391,7 @@ def _build_visual_probe_plan(
     priority: str,
     execution_tier: str,
     page_context: dict[str, Any] | None,
+    memory_issue_types: list[str] | None = None,
 ) -> dict[str, Any]:
     context = page_context if isinstance(page_context, dict) else {}
     interaction_targets = _safe_obj_list(context.get("interaction_targets"), limit=12)
@@ -328,20 +400,45 @@ def _build_visual_probe_plan(
     anchor_count = _as_int(interaction_hints.get("anchor_count"))
     button_count = _as_int(interaction_hints.get("button_count"))
     cta_count = _as_int(interaction_hints.get("cta_count"))
+    memory_issue_type_list = _safe_str_list(memory_issue_types or [], limit=20)
+    memory_issue_type_set = {issue_type.strip().lower() for issue_type in memory_issue_type_list if issue_type.strip()}
+    probe_directives = _build_memory_probe_directives(memory_issue_type_list)
 
     probe_kinds: list[str] = []
     high_impact_reason = reason in {"start_url", "header_navigation", "cta_navigation"}
     if execution_tier == "deep":
         probe_kinds.append("scroll_probe")
-        if hover_count > 0:
+        if hover_count > 0 or button_count > 0 or cta_count > 0:
             probe_kinds.append("hover_probe")
-        if anchor_count > 0 or button_count > 0:
+        if anchor_count > 0 or button_count > 0 or cta_count > 0:
             probe_kinds.append("clickability_probe")
     elif high_impact_reason or priority == "high":
         if anchor_count > 0 or button_count > 0 or cta_count > 0:
             probe_kinds.append("clickability_probe")
         else:
             probe_kinds.append("scroll_probe")
+
+    if memory_issue_type_set.intersection({"animation_replay", "flicker", "performance_motion"}):
+        probe_kinds.append("scroll_probe")
+    if memory_issue_type_set.intersection({"menu_consistency"}) and (hover_count > 0 or button_count > 0 or cta_count > 0):
+        probe_kinds.append("hover_probe")
+    if memory_issue_type_set.intersection(
+        {
+            "broken_link",
+            "close_button",
+            "share_preview",
+            "mobile_overlay_depth",
+            "mobile_media_render",
+            "footer_alignment",
+            "click_feedback",
+            "responsive_overflow",
+        }
+    ) and (anchor_count > 0 or button_count > 0 or cta_count > 0):
+        probe_kinds.append("clickability_probe")
+    if memory_issue_type_set.intersection({"click_affordance"}) and (hover_count > 0 or button_count > 0 or cta_count > 0):
+        probe_kinds.append("hover_probe")
+    if memory_issue_type_set.intersection({"text_wrap", "mobile_alignment", "spacing_layout", "image_render", "footer_alignment"}):
+        probe_kinds.append("scroll_probe")
 
     deduped_kinds: list[str] = []
     seen: set[str] = set()
@@ -362,7 +459,277 @@ def _build_visual_probe_plan(
             "hover_candidate_count": hover_count,
             "nav_candidate_count": _as_int(interaction_hints.get("nav_candidate_count")),
         },
+        "memory_issue_types": memory_issue_type_list,
+        "probe_directives": probe_directives,
         "source": "domain_context_map",
+    }
+
+
+def _build_memory_probe_directives(memory_issue_types: list[str]) -> dict[str, Any]:
+    issue_types = [issue_type.strip().lower() for issue_type in memory_issue_types if issue_type.strip()]
+    focus_terms: list[str] = []
+    for issue_type in issue_types:
+        focus_terms.extend(MEMORY_ISSUE_FOCUS_TERMS.get(issue_type, ()))
+    unique_focus_terms: list[str] = []
+    seen_terms: set[str] = set()
+    for term in focus_terms:
+        lowered = term.lower().strip()
+        if lowered and lowered not in seen_terms:
+            unique_focus_terms.append(lowered)
+            seen_terms.add(lowered)
+
+    scroll_mode = "basic"
+    if any(issue_type in {"animation_replay", "flicker", "performance_motion"} for issue_type in issue_types):
+        scroll_mode = "reentry"
+
+    hover_focus = "general"
+    if any(issue_type in {"menu_consistency"} for issue_type in issue_types):
+        hover_focus = "menu"
+    elif any(issue_type in {"click_affordance"} for issue_type in issue_types):
+        hover_focus = "affordance"
+
+    click_focus = "general"
+    if any(issue_type in {"mobile_overlay_depth", "responsive_overflow"} for issue_type in issue_types):
+        click_focus = "overlay"
+    elif any(issue_type in {"share_preview"} for issue_type in issue_types):
+        click_focus = "share_preview"
+    elif any(issue_type in {"close_button", "broken_link", "click_feedback"} for issue_type in issue_types):
+        click_focus = "navigation"
+
+    return {
+        "priority_issue_types": issue_types,
+        "focus_terms": unique_focus_terms[:10],
+        "scroll_mode": scroll_mode,
+        "hover_focus": hover_focus,
+        "click_focus": click_focus,
+    }
+
+
+def _clean_memory_query_fragment(value: Any, *, max_len: int = 120) -> str:
+    text = _trim_text(str(value or "").replace("\n", " "), max_len)
+    text = re.sub(r"\s+", " ", text).strip(" |")
+    return text.strip()
+
+
+def _looks_meaningful_memory_query_fragment(value: Any) -> bool:
+    text = _clean_memory_query_fragment(value)
+    if len(text) < 2:
+        return False
+    if not re.search(r"[A-Za-z가-힣]", text):
+        return False
+    meaningful_chars = len(re.findall(r"[A-Za-z가-힣0-9]", text))
+    return meaningful_chars / max(len(text), 1) >= 0.45
+
+
+def _build_memory_query_route_terms(url: str) -> list[str]:
+    parsed = urlparse(str(url or ""))
+    route_terms: list[str] = []
+    for part in parsed.path.split("/"):
+        cleaned = re.sub(r"[^A-Za-z0-9_-]+", " ", part).strip()
+        if not cleaned:
+            continue
+        for token in re.split(r"[-_\s]+", cleaned):
+            token = token.strip().lower()
+            if 2 <= len(token) <= 40:
+                route_terms.append(token)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for token in route_terms:
+        if token not in seen:
+            deduped.append(token)
+            seen.add(token)
+    return deduped[:8]
+
+
+def _select_memory_query_labels(page: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    for target in _safe_obj_list(page.get("interaction_targets"), limit=12):
+        raw_label = target.get("label") or target.get("text") or target.get("selector") or ""
+        label = _compress_memory_query_label(raw_label)
+        if not _looks_meaningful_memory_query_fragment(label):
+            continue
+        lowered = label.lower()
+        if any(keyword in lowered for keyword in [keyword.lower() for keyword in MEMORY_QUERY_CTA_KEYWORDS]):
+            labels.append(label)
+            continue
+        if len(label) <= 24 and re.search(r"[A-Za-z가-힣]", label):
+            labels.append(label)
+    for raw_cta in _safe_str_list(page.get("cta_texts"), limit=8):
+        label = _compress_memory_query_label(raw_cta)
+        if _looks_meaningful_memory_query_fragment(label):
+            labels.append(label)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        lowered = label.lower()
+        if lowered not in seen:
+            deduped.append(label)
+            seen.add(lowered)
+    return deduped[:4]
+
+
+def _compress_memory_query_label(value: Any) -> str:
+    label = _clean_memory_query_fragment(value, max_len=120)
+    if len(label) <= 28:
+        return label
+    lowered = label.lower()
+    for keyword in MEMORY_QUERY_CTA_KEYWORDS:
+        keyword_lower = keyword.lower()
+        index = lowered.find(keyword_lower)
+        if index >= 0:
+            return _clean_memory_query_fragment(keyword, max_len=28)
+    return ""
+
+
+def _build_memory_retrieval_query(
+    *,
+    job_url: str,
+    final_url: str,
+    canonical_host: str,
+    pages: list[dict[str, Any]],
+) -> str:
+    query_parts: list[str] = []
+    for value in [job_url, final_url, canonical_host]:
+        text = _clean_memory_query_fragment(value, max_len=180)
+        if text:
+            query_parts.append(text)
+
+    route_terms = _build_memory_query_route_terms(final_url or job_url)
+    if route_terms:
+        query_parts.append("route " + " ".join(route_terms))
+
+    if "framer.app" in canonical_host or ".framer." in canonical_host:
+        query_parts.append("framework framer")
+
+    for page in pages[:2]:
+        title = _clean_memory_query_fragment(page.get("title"), max_len=100)
+        if _looks_meaningful_memory_query_fragment(title):
+            query_parts.append(title)
+        labels = _select_memory_query_labels(page)
+        if labels:
+            query_parts.append("labels " + " | ".join(labels))
+
+    deduped_parts: list[str] = []
+    seen_parts: set[str] = set()
+    for part in query_parts:
+        lowered = part.lower().strip()
+        if lowered and lowered not in seen_parts:
+            deduped_parts.append(part)
+            seen_parts.add(lowered)
+    return " | ".join(deduped_parts)
+
+
+def _build_memory_retrieval_payload(
+    ctx: RunContext,
+    *,
+    domain_context_map: dict[str, Any],
+    canonical_host: str,
+    final_url: str,
+    pages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    query_text = _build_memory_retrieval_query(
+        job_url=ctx.job.url,
+        final_url=final_url,
+        canonical_host=canonical_host,
+        pages=pages,
+    )
+    retrieval = retrieve_issue_memory_cards(
+        settings=ctx.settings,
+        query_text=query_text,
+        top_k=MEMORY_RETRIEVAL_TOP_K,
+    )
+    hits = _safe_obj_list(retrieval.get("hits"), limit=MEMORY_RETRIEVAL_TOP_K)
+    trimmed_hits: list[dict[str, Any]] = []
+    for hit in hits:
+        trimmed_hits.append(
+            {
+                "card_id": str(hit.get("card_id") or "").strip(),
+                "memory_id": str(hit.get("memory_id") or "").strip(),
+                "score": round(float(hit.get("score") or 0.0), 4),
+                "summary": _trim_text(str(hit.get("summary") or ""), 240),
+                "issue_types": _safe_str_list(hit.get("issue_types"), limit=12),
+                "platform": str(hit.get("platform") or "").strip(),
+                "section_hint": _trim_text(str(hit.get("section_hint") or ""), 120),
+                "severity_hint": str(hit.get("severity_hint") or "").strip(),
+                "source_message_ts": str(hit.get("source_message_ts") or "").strip(),
+                "evidence_count": _as_int(hit.get("evidence_count")),
+                "observation": _trim_text(str(hit.get("observation") or ""), 240),
+                "expected_behavior": _trim_text(str(hit.get("expected_behavior") or ""), 240),
+            }
+        )
+
+    issue_type_counts = dict(retrieval.get("issue_type_counts") or {})
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "run_id": ctx.job.job_id,
+        "stage": "memory_retrieval",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "mode": _normalize_mode_key(ctx.job.mode_key),
+        "query_text": query_text,
+        "enabled": bool(retrieval.get("enabled")),
+        "backend": str(retrieval.get("backend") or "").strip(),
+        "top_k": _as_int(retrieval.get("top_k")) or MEMORY_RETRIEVAL_TOP_K,
+        "total_hits": _as_int(retrieval.get("total_hits")),
+        "issue_type_counts": {str(key): _as_int(value) for key, value in issue_type_counts.items()},
+        "hits": trimmed_hits,
+        "index_stats": dict(retrieval.get("index_stats") or {}),
+        "reason": str(retrieval.get("reason") or "").strip() or None,
+    }
+
+
+def _select_memory_hints_for_case(
+    *,
+    memory_retrieval: dict[str, Any] | None,
+    page_context: dict[str, Any] | None,
+    reason: str,
+) -> dict[str, Any]:
+    retrieval = memory_retrieval if isinstance(memory_retrieval, dict) else {}
+    hits = _safe_obj_list(retrieval.get("hits"), limit=MEMORY_RETRIEVAL_TOP_K)
+    page = page_context if isinstance(page_context, dict) else {}
+    labels: list[str] = []
+    for target in _safe_obj_list(page.get("interaction_targets"), limit=8):
+        label = _trim_text(str(target.get("label") or target.get("text") or target.get("selector") or ""), 120)
+        if label:
+            labels.append(label.lower())
+    title = str(page.get("title") or "").strip().lower()
+    reason_norm = str(reason or "").strip().lower()
+
+    matched_hits: list[dict[str, Any]] = []
+    seen_cards: set[str] = set()
+    for hit in hits:
+        card_id = str(hit.get("card_id") or "").strip()
+        if not card_id or card_id in seen_cards:
+            continue
+        haystacks = [
+            str(hit.get("summary") or "").strip().lower(),
+            str(hit.get("observation") or "").strip().lower(),
+            str(hit.get("section_hint") or "").strip().lower(),
+        ]
+        matched = False
+        for label in labels:
+            if any(label and label in haystack for haystack in haystacks):
+                matched = True
+                break
+        if not matched and title and any(title and title in haystack for haystack in haystacks):
+            matched = True
+        if not matched and reason_norm and any(reason_norm in haystack for haystack in haystacks):
+            matched = True
+        if matched or len(matched_hits) < 2:
+            matched_hits.append(hit)
+            seen_cards.add(card_id)
+        if len(matched_hits) >= 3:
+            break
+
+    issue_type_set: set[str] = set()
+    for hit in matched_hits:
+        for issue_type in _safe_str_list(hit.get("issue_types"), limit=12):
+            issue_type_set.add(issue_type)
+
+    return {
+        "enabled": bool(retrieval.get("enabled")),
+        "issue_types": sorted(issue_type_set),
+        "hit_count": len(matched_hits),
+        "hits": matched_hits,
     }
 
 
@@ -379,6 +746,16 @@ def _langgraph_plan_node(ctx: RunContext, state: PipelineState) -> PipelineState
         for page in pages
         if str(page.get("url") or "").strip()
     }
+    memory_retrieval = _build_memory_retrieval_payload(
+        ctx,
+        domain_context_map=domain_context_map,
+        canonical_host=canonical_host,
+        final_url=final_url,
+        pages=pages,
+    )
+    memory_retrieval_path = ctx.artifact_dir / "memory_retrieval.json"
+    _write_json(memory_retrieval_path, memory_retrieval)
+    ctx.add_artifact(memory_retrieval_path)
 
     coverage_targets: list[dict[str, Any]] = []
     seen_target_keys: set[str] = set()
@@ -448,6 +825,23 @@ def _langgraph_plan_node(ctx: RunContext, state: PipelineState) -> PipelineState
             "candidate_limit": MAX_VISUAL_PROBE_CANDIDATES,
             "screenshot_limit_per_case": MAX_VISUAL_PROBE_SCREENSHOTS_PER_CASE,
         },
+        "memory_retrieval": {
+            "enabled": bool(memory_retrieval.get("enabled")),
+            "backend": str(memory_retrieval.get("backend") or "").strip(),
+            "query_text": _trim_text(str(memory_retrieval.get("query_text") or ""), 600),
+            "total_hits": _as_int(memory_retrieval.get("total_hits")),
+            "issue_type_counts": dict(memory_retrieval.get("issue_type_counts") or {}),
+            "top_hit_cards": [
+                {
+                    "card_id": str(hit.get("card_id") or "").strip(),
+                    "memory_id": str(hit.get("memory_id") or "").strip(),
+                    "score": round(float(hit.get("score") or 0.0), 4),
+                    "summary": _trim_text(str(hit.get("summary") or ""), 180),
+                    "issue_types": _safe_str_list(hit.get("issue_types"), limit=12),
+                }
+                for hit in _safe_obj_list(memory_retrieval.get("hits"), limit=3)
+            ],
+        },
         "needs_review_triggers": DEFAULT_NEEDS_REVIEW_TRIGGERS,
         "coverage_targets": coverage_targets,
         "exclusions": [
@@ -473,11 +867,17 @@ def _langgraph_plan_node(ctx: RunContext, state: PipelineState) -> PipelineState
             execution_tier = "deep"
             deep_assigned += 1
         page_context = page_context_by_url.get(url, {})
+        memory_hints = _select_memory_hints_for_case(
+            memory_retrieval=memory_retrieval,
+            page_context=page_context,
+            reason=reason,
+        )
         visual_probe_plan = _build_visual_probe_plan(
             reason=reason,
             priority=priority,
             execution_tier=execution_tier,
             page_context=page_context,
+            memory_issue_types=memory_hints.get("issue_types"),
         )
         test_cases.append(
             {
@@ -500,6 +900,7 @@ def _langgraph_plan_node(ctx: RunContext, state: PipelineState) -> PipelineState
                 "execution_tier": execution_tier,
                 "priority": priority,
                 "reason": reason,
+                "memory_hints": memory_hints,
                 "visual_probe_plan": visual_probe_plan,
             }
         )
@@ -520,7 +921,11 @@ def _langgraph_plan_node(ctx: RunContext, state: PipelineState) -> PipelineState
     ctx.add_artifact(coverage_path)
     ctx.add_artifact(test_cases_path)
     ctx.log("stage: plan:done")
-    return {"coverage_plan": coverage_plan, "test_cases": test_cases}
+    return {
+        "coverage_plan": coverage_plan,
+        "test_cases": test_cases,
+        "memory_retrieval": memory_retrieval,
+    }
 
 
 def _langgraph_execute_node(ctx: RunContext, state: PipelineState, provider: ProviderKind) -> PipelineState:
@@ -1315,6 +1720,34 @@ def _probe_plan_enabled(plan: dict[str, Any] | None) -> bool:
     return bool(probe_kinds)
 
 
+def _select_probe_candidate(items: list[dict[str, Any]], focus_terms: list[str]) -> dict[str, Any]:
+    if not items:
+        return {}
+    normalized_focus_terms = [term.lower().strip() for term in focus_terms if term]
+    if not normalized_focus_terms:
+        return dict(items[0])
+
+    best_item = dict(items[0])
+    best_score = -1.0
+    for raw_item in items:
+        item = dict(raw_item or {})
+        haystack = " ".join(
+            [
+                str(item.get("label") or ""),
+                str(item.get("className") or ""),
+                str(item.get("selector") or ""),
+                str(item.get("href") or ""),
+                str(item.get("tag") or ""),
+            ]
+        ).lower()
+        focus_score = sum(4 for term in normalized_focus_terms if term in haystack)
+        score = float(item.get("score") or 0.0) + focus_score
+        if score > best_score:
+            best_item = item
+            best_score = score
+    return best_item
+
+
 def _parse_jsonish_text(raw: str) -> Any:
     text = str(raw or "").strip()
     if not text:
@@ -1352,6 +1785,109 @@ async def _browser_evaluate_json(
 ) -> Any:
     text = await _call_mcp_tool(session, "browser_evaluate", {"expression": expression}, execution_log, ctx)
     return _parse_jsonish_text(text)
+
+
+def _build_map_visible_cta_expression(candidate_limit: int = 12) -> str:
+    return (
+        """
+(() => {
+  function shortText(v){return String(v||'').replace(/\\s+/g,' ').trim().slice(0,120);}
+  function esc(v){if(window.CSS&&CSS.escape){return CSS.escape(String(v||''));} return String(v||'').replace(/[^a-zA-Z0-9_-]/g,'\\\\$&');}
+  function cssPath(el){
+    if(!el){return '';}
+    if(el.id){return '#' + esc(el.id);}
+    const parts=[]; let node=el;
+    while(node&&node.nodeType===1&&parts.length<6){
+      let part=node.tagName.toLowerCase();
+      const classes=Array.from(node.classList||[]).slice(0,2).filter(Boolean);
+      if(classes.length){part+='.' + classes.map(esc).join('.');}
+      if(node.parentElement){
+        const siblings=Array.from(node.parentElement.children).filter((child)=>child.tagName===node.tagName);
+        if(siblings.length>1){part += ':nth-of-type(' + (siblings.indexOf(node)+1) + ')';}
+      }
+      parts.unshift(part);
+      const selector=parts.join(' > ');
+      try{if(document.querySelectorAll(selector).length===1){return selector;}}catch(err){}
+      node=node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+  function visible(el){
+    if(!el){return false;}
+    const style=getComputedStyle(el);
+    const rect=el.getBoundingClientRect();
+    return rect.width>=16 && rect.height>=16 && style.display!=='none' && style.visibility!=='hidden' && parseFloat(style.opacity||'1')>0.05;
+  }
+  function sameHostHref(raw){
+    try{
+      const url=new URL(raw, window.location.href);
+      return url.host===window.location.host ? url.href : '';
+    }catch(err){
+      return '';
+    }
+  }
+  function clickableLike(el){
+    if(!el){return false;}
+    const style=getComputedStyle(el);
+    return style.cursor==='pointer' || el.matches('a[href],button,[role="button"],[onclick]') || el.getAttribute('role')==='button' || (typeof el.onclick === 'function') || el.tabIndex >= 0;
+  }
+  function resolveTarget(el){
+    let node=el;
+    for(let depth=0; depth<4 && node && node.nodeType===1; depth+=1, node=node.parentElement){
+      if(clickableLike(node)){return node;}
+    }
+    return el;
+  }
+  const ctaPattern=/문의|상담|contact|demo|start|trial|buy|구매|시작|다운로드|download|리포트|report|자료|신청|바로 보기|바로보기|보기/i;
+  const nodes=Array.from(document.querySelectorAll('a,button,[role="button"],[onclick],[tabindex],div,span,p'));
+  const items=[];
+  for(const el of nodes){
+    if(!visible(el)){continue;}
+    const target=resolveTarget(el);
+    if(!visible(target)){continue;}
+    const rect=target.getBoundingClientRect();
+    if(rect.width * rect.height > window.innerWidth * window.innerHeight * 0.85){continue;}
+    const text=shortText(el.innerText||el.textContent||target.innerText||target.textContent||target.getAttribute('aria-label')||'');
+    if(!text){continue;}
+    const cls=shortText(target.className||'');
+    const cursor=(getComputedStyle(target).cursor||'').trim();
+    const href=target.matches('a[href]') ? sameHostHref(target.getAttribute('href')||'') : '';
+    const role=target.getAttribute('role')||'';
+    const likely = ctaPattern.test(text + ' ' + cls) || cursor==='pointer' || role==='button' || target.matches('button,[onclick]');
+    if(!likely){continue;}
+    let score = 1;
+    if(ctaPattern.test(text + ' ' + cls)){score += 6;}
+    if(cursor==='pointer'){score += 3;}
+    if(href){score += 2;}
+    if(role==='button' || target.matches('button,[onclick]')){score += 2;}
+    if(rect.top < window.innerHeight * 0.8){score += 1;}
+    items.push({
+      selector: cssPath(target),
+      label: text,
+      tag: target.tagName.toLowerCase(),
+      className: cls,
+      cursor: cursor,
+      href: href || null,
+      role: role || null,
+      score: score,
+      top: Math.round(rect.top),
+      rect: {left: Math.round(rect.left*100)/100, top: Math.round(rect.top*100)/100, width: Math.round(rect.width*100)/100, height: Math.round(rect.height*100)/100},
+    });
+  }
+  items.sort((a,b)=>b.score-a.score || a.top-b.top);
+  const deduped=[];
+  const seen=new Set();
+  for(const item of items){
+    const key = [item.selector, item.label, item.href || ''].join('||');
+    if(seen.has(key)){continue;}
+    seen.add(key);
+    deduped.push(item);
+    if(deduped.length >= __LIMIT__){break;}
+  }
+  return JSON.stringify(deduped);
+})()
+        """.strip().replace("__LIMIT__", str(candidate_limit))
+    )
 
 
 async def _capture_named_screenshot(
@@ -1647,7 +2183,10 @@ async def _run_scroll_probe(
     page_url: str,
     execution_log: list[str],
     evidence: list[dict[str, Any]],
+    directives: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    probe_directives = dict(directives or {})
+    scroll_mode = str(probe_directives.get("scroll_mode") or "basic").strip().lower()
     before_metrics = await _browser_evaluate_json(
         session,
         ctx,
@@ -1677,6 +2216,7 @@ async def _run_scroll_probe(
             "scroll_before": scroll_before,
             "scroll_height": scroll_height,
             "inner_height": inner_height,
+            "scroll_mode": scroll_mode,
         },
         "evidence_refs": [],
     }
@@ -1710,12 +2250,41 @@ async def _run_scroll_probe(
     ) or {}
     scroll_after = _as_int((after_metrics or {}).get("scrollY"))
     probe["diagnostic"]["scroll_after"] = scroll_after
+    reentry_scroll = scroll_after
+    if scroll_mode == "reentry":
+        await _probe_safe_tool(session, ctx, execution_log, "browser_scroll", {"direction": "up", "amount": 2})
+        await _probe_safe_tool(session, ctx, execution_log, "browser_sleep", {"ms": 350})
+        reentry_up = await _browser_evaluate_json(
+            session,
+            ctx,
+            execution_log,
+            "(() => JSON.stringify({scrollY: window.scrollY || window.pageYOffset || 0}))()",
+        ) or {}
+        reentry_up_scroll = _as_int((reentry_up or {}).get("scrollY"))
+        await _probe_safe_tool(session, ctx, execution_log, "browser_scroll", {"direction": "down", "amount": 2})
+        await _probe_safe_tool(session, ctx, execution_log, "browser_sleep", {"ms": 350})
+        reentry_down = await _browser_evaluate_json(
+            session,
+            ctx,
+            execution_log,
+            "(() => JSON.stringify({scrollY: window.scrollY || window.pageYOffset || 0}))()",
+        ) or {}
+        reentry_scroll = _as_int((reentry_down or {}).get("scrollY"))
+        probe["diagnostic"]["reentry_up_scroll"] = reentry_up_scroll
+        probe["diagnostic"]["reentry_down_scroll"] = reentry_scroll
     probe["observations"] = [
         f"scroll_before={scroll_before}",
         f"scroll_after={scroll_after}",
         f"scroll_height={scroll_height}",
         f"inner_height={inner_height}",
     ]
+    if scroll_mode == "reentry":
+        probe["observations"].extend(
+            [
+                f"reentry_up_scroll={_as_int(probe['diagnostic'].get('reentry_up_scroll'))}",
+                f"reentry_down_scroll={reentry_scroll}",
+            ]
+        )
     after_path = await _capture_named_screenshot(
         session,
         ctx,
@@ -1733,7 +2302,14 @@ async def _run_scroll_probe(
             }
         )
         probe["evidence_refs"].append(after_path)
-    if scroll_after > scroll_before + 40:
+    if scroll_mode == "reentry":
+        if scroll_after > scroll_before + 40 and reentry_scroll > scroll_before + 40:
+            probe["status"] = "pass"
+            probe["status_reason"] = "reentry scroll evidence captured for animation/motion review"
+        else:
+            probe["status"] = "needs_review"
+            probe["status_reason"] = "reentry scroll pattern could not be confirmed"
+    elif scroll_after > scroll_before + 40:
         probe["status"] = "pass"
         probe["status_reason"] = "scroll action produced visible page movement"
     else:
@@ -1751,7 +2327,10 @@ async def _run_hover_probe(
     execution_log: list[str],
     evidence: list[dict[str, Any]],
     candidate_limit: int,
+    directives: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    probe_directives = dict(directives or {})
+    focus_terms = _safe_str_list(probe_directives.get("focus_terms"), limit=10)
     candidates = await _browser_evaluate_json(
         session,
         ctx,
@@ -1773,11 +2352,15 @@ async def _run_hover_probe(
             "node=node.parentElement;} return parts.join(' > ');}"
             "function visible(el){if(!el){return false;} const style=getComputedStyle(el); const rect=el.getBoundingClientRect();"
             "return rect.width>=6 && rect.height>=6 && style.display!=='none' && style.visibility!=='hidden' && parseFloat(style.opacity||'1')>0.05;}"
-            "const nodes=Array.from(document.querySelectorAll('nav a, nav button, header a, header button, [aria-haspopup], [aria-expanded], .menu, .dropdown, button, a'));"
-            "const items=nodes.filter(visible).map((el)=>{const rect=el.getBoundingClientRect(); const viewport={width:window.innerWidth,height:window.innerHeight,scrollX:window.scrollX||0,scrollY:window.scrollY||0,devicePixelRatio:window.devicePixelRatio||1}; const text=shortText(el.innerText||el.textContent||''); "
-            "const cls=shortText(el.className||''); const score=(text ? 1 : 0) + (/menu|dropdown|popover|tooltip/i.test(text+' '+cls) ? 4 : 0) + "
-            "(el.closest('nav,header') ? 2 : 0) + (el.hasAttribute('aria-haspopup') ? 2 : 0); "
-            "return {selector: cssPath(el), label: text || shortText(el.getAttribute('aria-label')||''), tag: el.tagName.toLowerCase(), className: cls, score: score, top: Math.round(rect.top), rect:{left:Math.round(rect.left*100)/100,top:Math.round(rect.top*100)/100,width:Math.round(rect.width*100)/100,height:Math.round(rect.height*100)/100}, viewport:viewport};});"
+            "const emphasis=/contact|demo|trial|start|buy|문의|상담|시작|다운로드|download|리포트|report|자료|신청|바로 보기|바로보기|보기/i;"
+            "function clickableLike(el){if(!el){return false;} const style=getComputedStyle(el); return style.cursor==='pointer' || el.matches('a[href],button,[role=\"button\"],[onclick]') || el.getAttribute('role')==='button' || (typeof el.onclick === 'function') || el.tabIndex >= 0;}"
+            "function resolveTarget(el){let node=el; for(let depth=0; depth<4 && node && node.nodeType===1; depth+=1, node=node.parentElement){ if(clickableLike(node)){return node;} } return el;}"
+            "const nodes=Array.from(document.querySelectorAll('nav a, nav button, header a, header button, [aria-haspopup], [aria-expanded], .menu, .dropdown, button, a, [role=\"button\"], [onclick], [tabindex], div, span, p'));"
+            "const items=nodes.filter(visible).map((el)=>{const targetEl=resolveTarget(el); if(!visible(targetEl)){return null;} const rect=targetEl.getBoundingClientRect(); const viewport={width:window.innerWidth,height:window.innerHeight,scrollX:window.scrollX||0,scrollY:window.scrollY||0,devicePixelRatio:window.devicePixelRatio||1}; const text=shortText(el.innerText||el.textContent||targetEl.innerText||targetEl.textContent||targetEl.getAttribute('aria-label')||''); "
+            "const cls=shortText(targetEl.className||''); const selector=cssPath(targetEl); const combined=(text+' '+cls+' '+selector).toLowerCase(); if(!text || /framer-editor|editorbar|edit content/.test(combined)){return null;} "
+            "const cursor=(getComputedStyle(targetEl).cursor||'').trim(); const score=(text ? 1 : 0) + (/menu|dropdown|popover|tooltip/i.test(text+' '+cls) ? 4 : 0) + "
+            "(targetEl.closest('nav,header') ? 2 : 0) + (targetEl.hasAttribute('aria-haspopup') ? 2 : 0) + (emphasis.test(text+' '+cls) ? 5 : 0) + (cursor==='pointer' ? 2 : 0); "
+            "return {selector: selector, label: text || shortText(targetEl.getAttribute('aria-label')||''), tag: targetEl.tagName.toLowerCase(), className: cls, score: score, top: Math.round(rect.top), rect:{left:Math.round(rect.left*100)/100,top:Math.round(rect.top*100)/100,width:Math.round(rect.width*100)/100,height:Math.round(rect.height*100)/100}, viewport:viewport};}).filter(Boolean);"
             "items.sort((a,b)=>b.score-a.score || a.top-b.top);"
             "return JSON.stringify(items.slice(0," + str(candidate_limit) + "));"
             "})()"
@@ -1796,7 +2379,7 @@ async def _run_hover_probe(
     if not items:
         return probe
 
-    candidate = dict(items[0])
+    candidate = _select_probe_candidate(items, focus_terms)
     selector = str(candidate.get("selector") or "").strip()
     selector_json = json.dumps(selector)
     before_state = await _browser_evaluate_json(
@@ -1907,6 +2490,7 @@ async def _run_hover_probe(
     probe["overlay_annotations"] = _build_probe_overlay_annotations("hover_probe", candidate, dict(probe["diagnostic"] or {}))
     probe["observations"] = [
         f"selector={selector}",
+        f"hover_focus={str(probe_directives.get('hover_focus') or 'general')}",
         f"hovered_after={str((after_state or {}).get('hovered') or False).lower()}",
         f"overlay_count_before={_as_int((before_state or {}).get('visibleOverlayCount'))}",
         f"overlay_count_after={_as_int((after_state or {}).get('visibleOverlayCount'))}",
@@ -1933,7 +2517,10 @@ async def _run_clickability_probe(
     execution_log: list[str],
     evidence: list[dict[str, Any]],
     candidate_limit: int,
+    directives: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
+    probe_directives = dict(directives or {})
+    focus_terms = _safe_str_list(probe_directives.get("focus_terms"), limit=10)
     candidates = await _browser_evaluate_json(
         session,
         ctx,
@@ -1957,17 +2544,19 @@ async def _run_clickability_probe(
             "return rect.width>=6 && rect.height>=6 && style.display!=='none' && style.visibility!=='hidden' && parseFloat(style.opacity||'1')>0.05;}"
             "function sameHostHref(raw){try{const url=new URL(raw, window.location.href); return url.host===window.location.host ? url.href : ''; }catch(err){return '';}}"
             "const destructive=/delete|remove|logout|submit|send|pay|checkout|order|download|upload|저장|삭제|결제|로그아웃|전송|다운로드/i;"
-            "const emphasis=/contact|demo|trial|start|buy|문의|상담|시작|pricing|quote/i;"
-            "const nodes=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"]'));"
-            "const items=nodes.filter(visible).map((el)=>{const rect=el.getBoundingClientRect(); const viewport={width:window.innerWidth,height:window.innerHeight,scrollX:window.scrollX||0,scrollY:window.scrollY||0,devicePixelRatio:window.devicePixelRatio||1}; const tag=el.tagName.toLowerCase(); "
-            "const text=shortText(el.innerText||el.textContent||el.getAttribute('aria-label')||''); const cls=shortText(el.className||''); "
-            "const href=tag==='a' ? sameHostHref(el.getAttribute('href')||'') : ''; const target=el.getAttribute('target')||''; "
+            "const emphasis=/contact|demo|trial|start|buy|문의|상담|시작|pricing|quote|다운로드|download|리포트|report|자료|신청|바로 보기|바로보기|보기/i;"
+            "function clickableLike(el){if(!el){return false;} const style=getComputedStyle(el); return style.cursor==='pointer' || el.matches('a[href],button,[role=\"button\"],[onclick]') || el.getAttribute('role')==='button' || (typeof el.onclick === 'function') || el.tabIndex >= 0;}"
+            "function resolveTarget(el){let node=el; for(let depth=0; depth<4 && node && node.nodeType===1; depth+=1, node=node.parentElement){ if(clickableLike(node)){return node;} } return el;}"
+            "const nodes=Array.from(document.querySelectorAll('a[href],button,[role=\"button\"],[onclick],[tabindex],div,span,p'));"
+            "const items=nodes.filter(visible).map((el)=>{const targetEl=resolveTarget(el); if(!visible(targetEl)){return null;} const rect=targetEl.getBoundingClientRect(); if(rect.width * rect.height > window.innerWidth * window.innerHeight * 0.85){return null;} const viewport={width:window.innerWidth,height:window.innerHeight,scrollX:window.scrollX||0,scrollY:window.scrollY||0,devicePixelRatio:window.devicePixelRatio||1}; const tag=targetEl.tagName.toLowerCase(); "
+            "const text=shortText(el.innerText||el.textContent||targetEl.innerText||targetEl.textContent||targetEl.getAttribute('aria-label')||''); const cls=shortText(targetEl.className||''); if(!text){return null;} "
+            "const href=tag==='a' ? sameHostHref(targetEl.getAttribute('href')||'') : ''; const target=targetEl.getAttribute('target')||''; const cursor=(getComputedStyle(targetEl).cursor||'').trim(); const role=targetEl.getAttribute('role')||'';"
             "const safeAnchor=tag==='a' && !!href && target.toLowerCase()!=='_blank'; "
-            "const buttonType=(el.getAttribute('type')||'button').toLowerCase(); "
-            "const safeButton=(tag==='button' || el.getAttribute('role')==='button') && buttonType!=='submit' && !el.closest('form'); "
-            "const safeToClick=(safeAnchor || safeButton) && !destructive.test(text); "
-            "let score=(text ? 1 : 0) + (emphasis.test(text+' '+cls) ? 4 : 0) + (rect.top < window.innerHeight * 0.7 ? 2 : 0); "
-            "if(safeToClick){score += 3;} return {selector: cssPath(el), label: text || href || tag, tag: tag, href: href || null, target: target || null, safe_to_click: safeToClick, top: Math.round(rect.top), score: score, rect:{left:Math.round(rect.left*100)/100,top:Math.round(rect.top*100)/100,width:Math.round(rect.width*100)/100,height:Math.round(rect.height*100)/100}, viewport:viewport};});"
+            "const buttonType=(targetEl.getAttribute('type')||'button').toLowerCase(); "
+            "const safeButton=(tag==='button' || role==='button' || cursor==='pointer' || targetEl.matches('[onclick]')) && buttonType!=='submit' && !targetEl.closest('form'); "
+            "const safeToClick=(safeAnchor || safeButton || emphasis.test(text+' '+cls)) && !destructive.test(text); "
+            "let score=(text ? 1 : 0) + (emphasis.test(text+' '+cls) ? 6 : 0) + (rect.top < window.innerHeight * 0.7 ? 2 : 0); "
+            "if(cursor==='pointer'){score += 3;} if(safeToClick){score += 3;} return {selector: cssPath(targetEl), label: text || href || tag, tag: tag, href: href || null, target: target || null, safe_to_click: safeToClick, top: Math.round(rect.top), score: score, rect:{left:Math.round(rect.left*100)/100,top:Math.round(rect.top*100)/100,width:Math.round(rect.width*100)/100,height:Math.round(rect.height*100)/100}, viewport:viewport};}).filter(Boolean);"
             "items.sort((a,b)=>b.score-a.score || a.top-b.top);"
             "return JSON.stringify(items.slice(0," + str(candidate_limit) + "));"
             "})()"
@@ -1986,12 +2575,8 @@ async def _run_clickability_probe(
     if not items:
         return probe, page_url
 
-    selected = None
-    for item in items:
-        candidate = dict(item)
-        if bool(candidate.get("safe_to_click")):
-            selected = candidate
-            break
+    prioritized_items = [dict(item) for item in items if bool(dict(item).get("safe_to_click"))]
+    selected = _select_probe_candidate(prioritized_items or [dict(item) for item in items], focus_terms)
     if selected is None:
         selected = dict(items[0])
 
@@ -2015,7 +2600,7 @@ async def _run_clickability_probe(
             "const hit=document.elementFromPoint(centerX, centerY);"
             "const blockerRect=hit&&!(hit===el||el.contains(hit))&&hit.getBoundingClientRect ? hit.getBoundingClientRect() : null;"
             "const blocker=hit && !(hit===el || el.contains(hit)) ? {tag:(hit.tagName||'').toLowerCase(), text:shortText(hit.innerText||hit.textContent||''), className:shortText(hit.className||''), rect:blockerRect ? {left:Math.round(blockerRect.left*100)/100,top:Math.round(blockerRect.top*100)/100,width:Math.round(blockerRect.width*100)/100,height:Math.round(blockerRect.height*100)/100} : null} : null;"
-            "const visibleDialogs=Array.from(document.querySelectorAll('[role=\"dialog\"],dialog,.modal')).filter((node)=>{const st=getComputedStyle(node); const rc=node.getBoundingClientRect(); return rc.width>=6 && rc.height>=6 && st.display!=='none' && st.visibility!=='hidden' && parseFloat(st.opacity||'1')>0.05;}).length;"
+            "const visibleDialogs=Array.from(document.querySelectorAll('body *')).filter((node)=>{const st=getComputedStyle(node); const rc=node.getBoundingClientRect(); if(!(rc.width>=6 && rc.height>=6 && st.display!=='none' && st.visibility!=='hidden' && parseFloat(st.opacity||'1')>0.05)){return false;} const txt=shortText(node.innerText||node.textContent||''); const looksLikeModal=node.matches('[role=\"dialog\"],dialog,.modal,[class*=\"modal\"],[class*=\"dialog\"],[data-state=\"open\"]'); const looksLikeFormOverlay=/(문의 양식|불러오고 있어요|잠시만 기다려주세요|성함|이메일|회사명|전화번호|직무)/.test(txt) && (st.position==='fixed' || st.position==='sticky' || (rc.width > window.innerWidth * 0.4 && rc.height > window.innerHeight * 0.4)); return looksLikeModal || looksLikeFormOverlay;}).slice(0,5).length;"
             "return JSON.stringify({"
             "found:true,"
             "display: style.display,"
@@ -2085,13 +2670,14 @@ async def _run_clickability_probe(
                 execution_log,
                 (
                     "(() => {"
+                    "function shortText(v){return String(v||'').replace(/\\s+/g,' ').trim().slice(0,120);}"
                     "const selector = " + selector_json + ";"
                     "const el=document.querySelector(selector);"
                     "const viewport={width:window.innerWidth,height:window.innerHeight,scrollX:window.scrollX||0,scrollY:window.scrollY||0,devicePixelRatio:window.devicePixelRatio||1};"
                     "const rect=el&&el.getBoundingClientRect ? el.getBoundingClientRect() : null;"
                     "return JSON.stringify({"
                     "found: !!el,"
-                    "dialogCount: Array.from(document.querySelectorAll('[role=\"dialog\"],dialog,.modal')).filter((node)=>{const st=getComputedStyle(node); const rc=node.getBoundingClientRect(); return rc.width>=6 && rc.height>=6 && st.display!=='none' && st.visibility!=='hidden' && parseFloat(st.opacity||'1')>0.05;}).length,"
+                    "dialogCount: Array.from(document.querySelectorAll('body *')).filter((node)=>{const st=getComputedStyle(node); const rc=node.getBoundingClientRect(); if(!(rc.width>=6 && rc.height>=6 && st.display!=='none' && st.visibility!=='hidden' && parseFloat(st.opacity||'1')>0.05)){return false;} const txt=shortText(node.innerText||node.textContent||''); const looksLikeModal=node.matches('[role=\"dialog\"],dialog,.modal,[class*=\"modal\"],[class*=\"dialog\"],[data-state=\"open\"]'); const looksLikeFormOverlay=/(문의 양식|불러오고 있어요|잠시만 기다려주세요|성함|이메일|회사명|전화번호|직무)/.test(txt) && (st.position==='fixed' || st.position==='sticky' || (rc.width > window.innerWidth * 0.4 && rc.height > window.innerHeight * 0.4)); return looksLikeModal || looksLikeFormOverlay;}).slice(0,5).length,"
                     "rect: rect ? {left:Math.round(rect.left*100)/100,top:Math.round(rect.top*100)/100,width:Math.round(rect.width*100)/100,height:Math.round(rect.height*100)/100} : null,"
                     "viewport: viewport"
                     "});"
@@ -2151,6 +2737,7 @@ async def _run_clickability_probe(
     blocker_payload = (state_before or {}).get("blocker") or {}
     probe["observations"] = [
         f"candidate={str(selected.get('label') or '').strip() or str(selected.get('selector') or '').strip()}",
+        f"click_focus={str(probe_directives.get('click_focus') or 'general')}",
         f"hit_ok={str(bool((state_before or {}).get('hitOk'))).lower()}",
         f"pointer_events={str((state_before or {}).get('pointerEvents') or '')}",
         f"blocker_tag={str((blocker_payload or {}).get('tag') or '')}",
@@ -2180,6 +2767,7 @@ async def _execute_visual_probe_suite_with_vibium(
 
     probe_kinds = _safe_str_list(probe_plan.get("probe_kinds"), limit=len(VISUAL_PROBE_KINDS))
     candidate_limit = max(1, min(MAX_VISUAL_PROBE_CANDIDATES, _as_int(probe_plan.get("candidate_limit")) or 1))
+    probe_directives = dict(probe_plan.get("probe_directives") or {})
     execution_log: list[str] = []
     evidence: list[dict[str, Any]] = []
     probes: list[dict[str, Any]] = []
@@ -2219,6 +2807,7 @@ async def _execute_visual_probe_suite_with_vibium(
                             page_url=current_url,
                             execution_log=execution_log,
                             evidence=evidence,
+                            directives=probe_directives,
                         )
                     )
                 if "hover_probe" in probe_kinds:
@@ -2231,6 +2820,7 @@ async def _execute_visual_probe_suite_with_vibium(
                             execution_log=execution_log,
                             evidence=evidence,
                             candidate_limit=candidate_limit,
+                            directives=probe_directives,
                         )
                     )
                 if "clickability_probe" in probe_kinds:
@@ -2243,6 +2833,7 @@ async def _execute_visual_probe_suite_with_vibium(
                         execution_log=execution_log,
                         evidence=evidence,
                         candidate_limit=candidate_limit,
+                        directives=probe_directives,
                     )
                     probes.append(click_probe)
 
@@ -3306,6 +3897,15 @@ async def _collect_page_context_with_vibium(ctx: RunContext) -> dict[str, Any]:
                     execution_log.append(f"tool_error {name}: {msg}")
                     return ""
 
+            async def safe_collect_json(expression: str) -> Any:
+                try:
+                    return await _browser_evaluate_json(session, ctx, execution_log, expression)
+                except Exception as exc:  # noqa: BLE001
+                    msg = _trim_text(str(exc), 220)
+                    limitations.append(f"collect_tool_fail browser_evaluate: {msg}")
+                    execution_log.append(f"tool_error browser_evaluate: {msg}")
+                    return None
+
             bootstrap_ok = False
             try:
                 await _call_mcp_tool(session, "browser_navigate", {"url": ctx.job.url}, execution_log, ctx)
@@ -3399,6 +3999,10 @@ async def _collect_page_context_with_vibium(ctx: RunContext) -> dict[str, Any]:
                 title_text = await safe_collect_tool("browser_get_title", {})
                 html_text = await safe_collect_tool("browser_get_html", {})
                 text_result = await safe_collect_tool("browser_get_text", {})
+                browser_map_text = await safe_collect_tool("browser_map", {})
+                visible_cta_candidates = await safe_collect_json(
+                    _build_map_visible_cta_expression(candidate_limit=12)
+                )
                 if not page_title and title_text:
                     page_title = title_text
 
@@ -3407,6 +4011,8 @@ async def _collect_page_context_with_vibium(ctx: RunContext) -> dict[str, Any]:
                     base_url=current_url,
                     canonical_scheme=canonical_scheme,
                     canonical_host=canonical_host,
+                    browser_map_text=browser_map_text,
+                    visible_cta_candidates=visible_cta_candidates if isinstance(visible_cta_candidates, list) else None,
                 )
 
                 pages.append(
@@ -3745,6 +4351,8 @@ def _extract_page_signals(
     base_url: str,
     canonical_scheme: str,
     canonical_host: str,
+    browser_map_text: str = "",
+    visible_cta_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if not html_text:
         return {
@@ -3787,6 +4395,17 @@ def _extract_page_signals(
         buttons=buttons,
         canonical_scheme=canonical_scheme,
         canonical_host=canonical_host,
+    )
+    browser_map_targets, browser_map_hints = _extract_browser_map_interaction_targets(browser_map_text)
+    visible_targets, visible_hints = _extract_visible_cta_interaction_targets(
+        visible_cta_candidates,
+        canonical_scheme=canonical_scheme,
+        canonical_host=canonical_host,
+    )
+    interaction_targets, interaction_hints = _merge_interaction_targets_and_hints(
+        (interaction_targets, interaction_hints),
+        (browser_map_targets, browser_map_hints),
+        (visible_targets, visible_hints),
     )
 
     internal_links: list[str] = []
@@ -3889,16 +4508,12 @@ def _extract_cta_links(
     canonical_scheme: str,
     canonical_host: str,
 ) -> list[str]:
-    cta_keywords = ("문의", "상담", "contact", "demo", "start", "trial", "buy", "구매", "시작")
-    cta_class_keywords = ("cta", "btn", "button", "primary")
     links: list[str] = []
     seen: set[str] = set()
     for anchor in anchors:
         label = str(anchor.get("text") or "").lower()
         cls = str(anchor.get("class") or "").lower()
-        is_cta = any(keyword in label for keyword in cta_keywords) or any(
-            keyword in cls for keyword in cta_class_keywords
-        )
+        is_cta = _matches_any_keyword(label, CTA_TEXT_KEYWORDS) or _matches_any_keyword(cls, CTA_CLASS_KEYWORDS)
         if not is_cta:
             continue
         scoped = _normalize_scoped_url(
@@ -3939,16 +4554,213 @@ def _extract_button_entries(html_text: str) -> list[dict[str, str]]:
     return buttons
 
 
+def _matches_any_keyword(text: str, keywords: tuple[str, ...]) -> bool:
+    lowered = str(text or "").lower()
+    return any(keyword in lowered for keyword in keywords)
+
+
+def _classify_interaction_signal(label: str, class_hint: str = "", tag_hint: str = "") -> tuple[bool, bool, bool]:
+    lowered_label = str(label or "").lower()
+    lowered_class = str(class_hint or "").lower()
+    lowered_tag = str(tag_hint or "").lower()
+    combined = " ".join(part for part in (lowered_label, lowered_class, lowered_tag) if part)
+    is_cta = _matches_any_keyword(combined, CTA_TEXT_KEYWORDS) or _matches_any_keyword(lowered_class, CTA_CLASS_KEYWORDS)
+    is_nav = _matches_any_keyword(combined, NAV_KEYWORDS) or _matches_any_keyword(lowered_class, ("nav", "menu", "header"))
+    is_hover = _matches_any_keyword(combined, HOVER_KEYWORDS) or (
+        lowered_tag in {"button", "a", "div", "span"} and (is_cta or is_nav)
+    )
+    return is_cta, is_nav, is_hover
+
+
+def _extract_browser_map_interaction_targets(map_text: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    if not map_text:
+        return [], {"anchor_count": 0, "button_count": 0, "cta_count": 0, "nav_candidate_count": 0, "hover_candidate_count": 0}
+
+    targets: list[dict[str, Any]] = []
+    button_like_count = 0
+    cta_count = 0
+    nav_count = 0
+    hover_count = 0
+    pattern = re.compile(r"^(?P<ref>@e\d+)\s+\[(?P<tag>[^\]]+)\](?:\s+\"(?P<label>.*)\")?$")
+    for raw_line in (map_text or "").splitlines():
+        line = str(raw_line or "").strip()
+        if not line.startswith("@e"):
+            continue
+        match = pattern.match(line)
+        if not match:
+            continue
+        ref = str(match.group("ref") or "").strip()
+        tag_descriptor = str(match.group("tag") or "").strip()
+        tag_hint = (tag_descriptor.split()[0] or "").lower()
+        label = _trim_text(str(match.group("label") or "").strip(), 120)
+        if not label and tag_hint not in {"button", "a"}:
+            continue
+
+        is_cta, is_nav, is_hover = _classify_interaction_signal(label, "", tag_hint)
+        if tag_hint in {"button", "a", "div", "span", "p"}:
+            button_like_count += 1
+        if is_cta:
+            cta_count += 1
+        if is_nav:
+            nav_count += 1
+        if is_hover:
+            hover_count += 1
+
+        score = 1
+        if label:
+            score += 2
+        if tag_hint in {"button", "a"}:
+            score += 2
+        if is_cta:
+            score += 5
+        if is_nav:
+            score += 2
+        if is_hover:
+            score += 2
+
+        targets.append(
+            {
+                "kind": "anchor" if tag_hint == "a" else "button" if tag_hint == "button" else "button_like",
+                "label": label or ref,
+                "url": None,
+                "class_hint": None,
+                "signal": "cta" if is_cta else "nav" if is_nav else "hover_candidate" if is_hover else "button_like",
+                "map_ref": ref,
+                "_score": score,
+            }
+        )
+
+    targets.sort(key=lambda item: (-int(item.get("_score") or 0), str(item.get("label") or "")))
+    normalized_targets: list[dict[str, Any]] = []
+    for item in targets[:12]:
+        normalized = dict(item)
+        normalized.pop("_score", None)
+        normalized_targets.append(normalized)
+
+    hints = {
+        "anchor_count": 0,
+        "button_count": button_like_count,
+        "cta_count": cta_count,
+        "nav_candidate_count": nav_count,
+        "hover_candidate_count": hover_count,
+    }
+    return normalized_targets, hints
+
+
+def _extract_visible_cta_interaction_targets(
+    candidates: list[dict[str, Any]] | None,
+    canonical_scheme: str,
+    canonical_host: str,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    items = candidates if isinstance(candidates, list) else []
+    targets: list[dict[str, Any]] = []
+    button_like_count = 0
+    cta_count = 0
+    nav_count = 0
+    hover_count = 0
+    for raw in items[:20]:
+        if not isinstance(raw, dict):
+            continue
+        label = _trim_text(str(raw.get("label") or ""), 120)
+        class_hint = _trim_text(str(raw.get("className") or raw.get("class_hint") or ""), 120)
+        tag_hint = str(raw.get("tag") or "").lower().strip()
+        href = str(raw.get("href") or "").strip()
+        scoped = _normalize_scoped_url(href, canonical_scheme=canonical_scheme, canonical_host=canonical_host) if href else None
+        is_cta, is_nav, is_hover = _classify_interaction_signal(label, class_hint, tag_hint)
+        if not (is_cta or (label and str(raw.get("cursor") or "").strip().lower() == "pointer")):
+            continue
+        button_like_count += 1
+        if is_cta:
+            cta_count += 1
+        if is_nav:
+            nav_count += 1
+        if is_hover or is_cta:
+            hover_count += 1
+
+        score = 1
+        if label:
+            score += 2
+        if scoped:
+            score += 2
+        if str(raw.get("cursor") or "").strip().lower() == "pointer":
+            score += 3
+        if is_cta:
+            score += 6
+        if is_nav:
+            score += 1
+
+        targets.append(
+            {
+                "kind": "anchor" if tag_hint == "a" and scoped else "button_like",
+                "label": label or (scoped or tag_hint or "visible_candidate"),
+                "url": scoped,
+                "class_hint": class_hint or None,
+                "signal": "cta" if is_cta else "hover_candidate" if (is_hover or str(raw.get("cursor") or "").strip().lower() == "pointer") else "button_like",
+                "selector": str(raw.get("selector") or "").strip() or None,
+                "_score": score,
+            }
+        )
+
+    targets.sort(key=lambda item: (-int(item.get("_score") or 0), str(item.get("label") or "")))
+    normalized_targets: list[dict[str, Any]] = []
+    for item in targets[:12]:
+        normalized = dict(item)
+        normalized.pop("_score", None)
+        normalized_targets.append(normalized)
+
+    hints = {
+        "anchor_count": len([item for item in normalized_targets if str(item.get("kind") or "") == "anchor"]),
+        "button_count": button_like_count,
+        "cta_count": cta_count,
+        "nav_candidate_count": nav_count,
+        "hover_candidate_count": hover_count,
+    }
+    return normalized_targets, hints
+
+
+def _merge_interaction_targets_and_hints(
+    *datasets: tuple[list[dict[str, Any]], dict[str, int]],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    merged_targets: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    hints = {
+        "anchor_count": 0,
+        "button_count": 0,
+        "cta_count": 0,
+        "nav_candidate_count": 0,
+        "hover_candidate_count": 0,
+    }
+    for targets, raw_hints in datasets:
+        for key in hints:
+            hints[key] = max(hints[key], _as_int((raw_hints or {}).get(key)))
+        for item in targets[:20]:
+            normalized = dict(item)
+            dedupe_key = "||".join(
+                [
+                    str(normalized.get("kind") or ""),
+                    str(normalized.get("label") or ""),
+                    str(normalized.get("url") or ""),
+                    str(normalized.get("selector") or ""),
+                    str(normalized.get("map_ref") or ""),
+                ]
+            )
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            merged_targets.append(normalized)
+            if len(merged_targets) >= 12:
+                break
+        if len(merged_targets) >= 12:
+            break
+    return merged_targets, hints
+
+
 def _extract_interaction_targets(
     anchors: list[dict[str, str]],
     buttons: list[dict[str, str]],
     canonical_scheme: str,
     canonical_host: str,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    cta_keywords = ("문의", "상담", "contact", "demo", "start", "trial", "buy", "구매", "시작")
-    nav_keywords = ("menu", "nav", "about", "pricing", "product", "contact", "company", "service")
-    hover_keywords = ("menu", "dropdown", "hover", "popover", "tooltip", "mega")
-
     targets: list[dict[str, Any]] = []
     hover_count = 0
     nav_count = 0
@@ -3963,16 +4775,7 @@ def _extract_interaction_targets(
         )
         if not scoped:
             continue
-        lowered_label = label.lower()
-        is_cta = any(keyword in lowered_label for keyword in cta_keywords) or any(
-            keyword in cls for keyword in ("cta", "btn", "button", "primary")
-        )
-        is_nav = any(keyword in lowered_label for keyword in nav_keywords) or any(
-            keyword in cls for keyword in ("nav", "menu", "header")
-        )
-        is_hover = any(keyword in lowered_label for keyword in hover_keywords) or any(
-            keyword in cls for keyword in hover_keywords
-        )
+        is_cta, is_nav, is_hover = _classify_interaction_signal(label, cls, "anchor")
         if is_nav:
             nav_count += 1
         if is_hover:
@@ -4002,18 +4805,15 @@ def _extract_interaction_targets(
         cls = str(button.get("class") or "").lower().strip()
         aria_has_popup = str(button.get("aria_has_popup") or "").lower().strip()
         aria_expanded = str(button.get("aria_expanded") or "").lower().strip()
-        lowered_label = label.lower()
-        is_hover = bool(aria_has_popup) or any(keyword in lowered_label for keyword in hover_keywords) or any(
-            keyword in cls for keyword in hover_keywords
-        )
-        is_nav = any(keyword in lowered_label for keyword in nav_keywords) or any(
-            keyword in cls for keyword in ("nav", "menu", "header")
-        )
+        is_cta, is_nav, is_hover = _classify_interaction_signal(label, cls, "button")
+        is_hover = bool(aria_has_popup) or is_hover
         if is_nav:
             nav_count += 1
         if is_hover:
             hover_count += 1
         score = 1
+        if is_cta:
+            score += 4
         if is_hover:
             score += 3
         if is_nav:
@@ -4026,7 +4826,7 @@ def _extract_interaction_targets(
                 "label": label or str(button.get("id") or "button"),
                 "url": None,
                 "class_hint": cls or None,
-                "signal": "hover_candidate" if is_hover else "button",
+                "signal": "cta" if is_cta else "hover_candidate" if is_hover else "button",
                 "aria_has_popup": aria_has_popup or None,
                 "aria_expanded": aria_expanded or None,
                 "_score": score,

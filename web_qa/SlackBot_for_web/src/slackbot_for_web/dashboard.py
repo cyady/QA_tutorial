@@ -21,6 +21,7 @@ KNOWN_JSON_ARTIFACTS = {
     "domain_context_map.json": "domain_context_map",
     "coverage_plan.json": "coverage_plan",
     "test_cases.json": "test_cases",
+    "memory_retrieval.json": "memory_retrieval",
     "execution_log.json": "execution_log",
     "test_case_results.json": "test_case_results",
     "visual_probes.json": "visual_probes",
@@ -292,7 +293,7 @@ def _pipeline_trace(summary: dict[str, Any]) -> list[dict[str, Any]]:
         },
         {
             "stage": "Plan",
-            "artifact": "coverage_plan.json / test_cases.json",
+            "artifact": "coverage_plan.json / test_cases.json / memory_retrieval.json",
             "ready": bool(summary.get("run_type") == "job"),
             "url": f"{base}/coverage_plan.json",
         },

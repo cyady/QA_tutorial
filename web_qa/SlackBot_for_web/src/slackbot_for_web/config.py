@@ -31,6 +31,9 @@ class Settings:
     artifact_root: str
     mode_store_path: str
     slack_verbose_output: bool
+    memory_embedding_backend: str
+    memory_embedding_model: str
+    memory_compare_models: tuple[str, ...]
 
     @property
     def preset_store_path(self) -> str:
@@ -60,6 +63,9 @@ class _SettingsValidationModel(BaseModel):
     artifact_root: str
     mode_store_path: str
     slack_verbose_output: bool
+    memory_embedding_backend: str
+    memory_embedding_model: str
+    memory_compare_models: tuple[str, ...]
 
     @field_validator(
         "default_agent",
@@ -71,6 +77,8 @@ class _SettingsValidationModel(BaseModel):
         "devtools_mcp_args",
         "artifact_root",
         "mode_store_path",
+        "memory_embedding_backend",
+        "memory_embedding_model",
         mode="before",
     )
     @classmethod
@@ -136,6 +144,17 @@ def load_settings(require_slack_tokens: bool = True) -> Settings:
             ).strip(),
         ),
         "slack_verbose_output": _parse_bool(_read_env("SLACK_VERBOSE_OUTPUT", "false")),
+        "memory_embedding_backend": os.getenv("MEMORY_EMBEDDING_BACKEND", "sentence_transformers").strip().lower(),
+        "memory_embedding_model": os.getenv(
+            "MEMORY_EMBEDDING_MODEL",
+            "intfloat/multilingual-e5-large-instruct",
+        ).strip(),
+        "memory_compare_models": _parse_csv_list(
+            os.getenv(
+                "MEMORY_COMPARE_MODELS",
+                "intfloat/multilingual-e5-large-instruct",
+            )
+        ),
     }
 
     try:

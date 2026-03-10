@@ -2,14 +2,20 @@
 
 import json
 import logging
+import threading
+import unicodedata
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+from uuid import uuid4
 
 from slack_bolt import App
 from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
 from slackbot_for_web.config import Settings
 from slackbot_for_web.models import QaRunRequest
@@ -22,6 +28,8 @@ DELETE_ACTION_ID = "delete_bot_message"
 USER_FACING_PRESET_KEY = "full_web_qa"
 USER_FACING_MODE_LABEL = "Full QA (E2E)"
 USER_FACING_AGENT_FALLBACK = "openai"
+QA_MEMORY_SHORTCUT_ID = "save_thread_to_qa_memory"
+QA_MEMORY_MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024
 
 
 def build_slack_app(settings: Settings) -> App:
@@ -90,6 +98,39 @@ def build_slack_app(settings: Settings) -> App:
                     text=f"Web QA modal open failed: `{type(exc).__name__}: {exc}`",
                 )
             logger.exception("Failed to open modal: %s", exc)
+
+    @app.shortcut(QA_MEMORY_SHORTCUT_ID)
+    def save_thread_to_qa_memory(ack, body, client, logger):
+        ack()
+        channel_id = _read_channel_id(body)
+        user_id = _read_user_id(body)
+        message_ts = _read_message_ts(body)
+        thread_ts = _read_message_thread_ts(body) or message_ts
+
+        _append_runtime_event(
+            settings,
+            "qa_memory_shortcut_received",
+            {
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "message_ts": message_ts,
+                "thread_ts": thread_ts,
+            },
+        )
+
+        threading.Thread(
+            target=_run_qa_memory_capture,
+            kwargs={
+                "settings": settings,
+                "client": client,
+                "logger": logger,
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "message_ts": message_ts,
+                "thread_ts": thread_ts,
+            },
+            daemon=True,
+        ).start()
 
     @app.action(DELETE_ACTION_ID)
     def delete_bot_message(ack, body, client, logger):
@@ -324,6 +365,8 @@ def _build_modal_view(
         ),
         "blocks": blocks,
     }
+
+
 def _read_value(values: dict[str, Any], block_id: str, action_id: str) -> str:
     block = values.get(block_id, {})
     action = block.get(action_id, {}) if isinstance(block, dict) else {}
@@ -352,6 +395,24 @@ def _safe_post_message(
         logger=_LOG,
         thread_ts=thread_ts,
     )
+
+
+def _safe_post_ephemeral(
+    client: WebClient,
+    channel_id: str,
+    user_id: str,
+    text: str,
+    thread_ts: str | None = None,
+) -> None:
+    if not channel_id or not user_id:
+        return
+    try:
+        payload: dict[str, Any] = {"channel": channel_id, "user": user_id, "text": text}
+        if thread_ts:
+            payload["thread_ts"] = thread_ts
+        client.chat_postEphemeral(**payload)
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("Slack ephemeral post failed channel=%s user=%s exc=%s", channel_id, user_id, exc)
 
 
 def _read_private_metadata(raw: Any) -> dict[str, str]:
@@ -406,6 +467,28 @@ def _read_thread_ts(body: dict[str, Any]) -> str:
     return ""
 
 
+def _read_message_ts(body: dict[str, Any]) -> str:
+    if not isinstance(body, dict):
+        return ""
+    message = body.get("message")
+    if isinstance(message, dict):
+        ts = message.get("ts")
+        if isinstance(ts, str):
+            return ts.strip()
+    return ""
+
+
+def _read_message_thread_ts(body: dict[str, Any]) -> str:
+    if not isinstance(body, dict):
+        return ""
+    message = body.get("message")
+    if isinstance(message, dict):
+        thread_ts = message.get("thread_ts")
+        if isinstance(thread_ts, str) and thread_ts.strip():
+            return thread_ts.strip()
+    return _read_thread_ts(body)
+
+
 def _persist_submit_snapshot(settings: Settings, job: QaRunRequest, payload: dict[str, Any]) -> None:
     artifact_dir = Path(settings.artifact_root) / job.job_id
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -448,3 +531,462 @@ def _resolve_user_facing_agent(raw: str) -> str:
     if normalized in {"gemini", "openai"}:
         return normalized
     return USER_FACING_AGENT_FALLBACK
+
+
+def _capture_thread_to_memory(
+    settings: Settings,
+    client: WebClient,
+    channel_id: str,
+    user_id: str,
+    message_ts: str,
+    thread_ts: str,
+) -> dict[str, Any]:
+    if not channel_id:
+        raise ValueError("missing channel id in shortcut payload")
+    if not thread_ts:
+        raise ValueError("missing thread ts in shortcut payload")
+
+    existing_archives = _find_existing_memory_archives(settings, channel_id=channel_id, thread_ts=thread_ts)
+    archive_dir = _select_canonical_memory_archive(existing_archives)
+    existing_manifest: dict[str, Any] = {}
+    existing_messages: list[dict[str, Any]] = []
+    existing_downloads: list[dict[str, Any]] = []
+    if archive_dir is None:
+        memory_id = f"MEM-{uuid4().hex[:8]}"
+        archive_dir = Path(settings.artifact_root) / "_memory" / memory_id
+    else:
+        memory_id = archive_dir.name
+        existing_manifest = _read_json_if_exists(archive_dir / "thread_manifest.json", default={})
+        existing_messages = _read_json_if_exists(archive_dir / "thread_messages.json", default=[])
+        existing_downloads = _read_json_if_exists(archive_dir / "file_manifest.json", default=[])
+    files_dir = archive_dir / "files"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    files_dir.mkdir(parents=True, exist_ok=True)
+
+    messages = _fetch_thread_messages(client, channel_id=channel_id, thread_ts=thread_ts)
+    existing_download_map = {
+        str(item.get("id", "")).strip(): item
+        for item in existing_downloads
+        if isinstance(item, dict) and str(item.get("id", "")).strip()
+    }
+    downloads = _download_thread_files(
+        client,
+        messages=messages,
+        files_dir=files_dir,
+        existing_download_map=existing_download_map,
+    )
+    merged_downloads = _merge_download_records(existing=existing_downloads, fresh=downloads)
+    download_map = {str(item.get("id", "")).strip(): item for item in merged_downloads if str(item.get("id", "")).strip()}
+    normalized_messages = _merge_thread_messages(
+        existing=existing_messages,
+        fresh=[_normalize_thread_message(message, download_map=download_map) for message in messages],
+    )
+    captured_at = datetime.now(timezone.utc).isoformat()
+    first_captured_at = str(existing_manifest.get("first_captured_at") or existing_manifest.get("captured_at") or captured_at)
+    capture_count = int(existing_manifest.get("capture_count") or 0) + 1
+    manifest = {
+        "memory_id": memory_id,
+        "channel_id": channel_id,
+        "user_id": user_id,
+        "message_ts": message_ts,
+        "thread_ts": thread_ts,
+        "thread_key": _thread_key(channel_id, thread_ts),
+        "captured_at": captured_at,
+        "first_captured_at": first_captured_at,
+        "last_captured_at": captured_at,
+        "capture_count": capture_count,
+        "message_count": len(normalized_messages),
+        "downloaded_file_count": sum(1 for item in merged_downloads if item.get("status") == "downloaded"),
+        "skipped_file_count": sum(1 for item in merged_downloads if item.get("status") != "downloaded"),
+    }
+
+    (archive_dir / "thread_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (archive_dir / "thread_messages.json").write_text(
+        json.dumps(normalized_messages, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (archive_dir / "file_manifest.json").write_text(
+        json.dumps(merged_downloads, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def _run_qa_memory_capture(
+    settings: Settings,
+    client: WebClient,
+    logger,
+    channel_id: str,
+    user_id: str,
+    message_ts: str,
+    thread_ts: str,
+) -> None:
+    try:
+        capture = _capture_thread_to_memory(
+            settings=settings,
+            client=client,
+            channel_id=channel_id,
+            user_id=user_id,
+            message_ts=message_ts,
+            thread_ts=thread_ts,
+        )
+        _safe_post_ephemeral(
+            client=client,
+            channel_id=channel_id,
+            user_id=user_id,
+            thread_ts=thread_ts or None,
+            text=(
+                f"QA memory {'updated' if int(capture.get('capture_count') or 1) > 1 else 'saved'}.\n"
+                f"Memory ID: `{capture['memory_id']}`\n"
+                f"Messages: `{capture['message_count']}` | Downloaded files: `{capture['downloaded_file_count']}` | Captures: `{capture['capture_count']}`"
+            ),
+        )
+        _append_runtime_event(
+            settings,
+            "qa_memory_shortcut_completed",
+            {
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "message_ts": message_ts,
+                "thread_ts": thread_ts,
+                "memory_id": capture["memory_id"],
+                "message_count": capture["message_count"],
+                "downloaded_file_count": capture["downloaded_file_count"],
+                "capture_count": capture["capture_count"],
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        _append_runtime_event(
+            settings,
+            "qa_memory_shortcut_failed",
+            {
+                "channel_id": channel_id,
+                "user_id": user_id,
+                "message_ts": message_ts,
+                "thread_ts": thread_ts,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            },
+        )
+        _safe_post_ephemeral(
+            client=client,
+            channel_id=channel_id,
+            user_id=user_id,
+            thread_ts=thread_ts or None,
+            text=f"QA memory save failed: `{type(exc).__name__}: {exc}`",
+        )
+        logger.exception("Failed to save QA memory from shortcut: %s", exc)
+
+
+def _fetch_thread_messages(client: WebClient, channel_id: str, thread_ts: str) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    cursor: str | None = None
+    join_retried = False
+    while True:
+        payload: dict[str, Any] = {"channel": channel_id, "ts": thread_ts, "limit": 200}
+        if cursor:
+            payload["cursor"] = cursor
+        try:
+            response = client.conversations_replies(**payload)
+        except SlackApiError as exc:
+            error_code = str(exc.response.get("error", "")).strip()
+            if error_code == "not_in_channel" and not join_retried and _can_auto_join_channel(channel_id):
+                join_retried = True
+                if _try_join_channel(client, channel_id):
+                    continue
+            raise _build_thread_access_error(channel_id=channel_id, original=exc) from exc
+        batch = response.get("messages")
+        if isinstance(batch, list):
+            messages.extend(item for item in batch if isinstance(item, dict))
+        metadata = response.get("response_metadata")
+        next_cursor = metadata.get("next_cursor") if isinstance(metadata, dict) else ""
+        if isinstance(next_cursor, str) and next_cursor.strip():
+            cursor = next_cursor.strip()
+            continue
+        break
+    return messages
+
+
+def _normalize_thread_message(message: dict[str, Any], download_map: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    files = []
+    for file_info in _extract_message_files(message):
+        file_id = str(file_info.get("id", "")).strip()
+        downloaded = download_map.get(file_id, {})
+        files.append(
+            {
+                "id": file_id,
+                "name": str(file_info.get("name", "")).strip(),
+                "mimetype": str(file_info.get("mimetype", "")).strip(),
+                "filetype": str(file_info.get("filetype", "")).strip(),
+                "size": int(file_info.get("size") or 0),
+                "permalink": str(file_info.get("permalink", "")).strip(),
+                "local_path": str(downloaded.get("local_path", "")).strip(),
+                "status": str(downloaded.get("status", "")).strip(),
+                "download_error": str(downloaded.get("error", "")).strip(),
+            }
+        )
+
+    return {
+        "ts": _normalize_unicode(str(message.get("ts", "")).strip()),
+        "thread_ts": _normalize_unicode(str(message.get("thread_ts", "")).strip()),
+        "user": _normalize_unicode(str(message.get("user", "")).strip()),
+        "subtype": _normalize_unicode(str(message.get("subtype", "")).strip()),
+        "text": _normalize_unicode(str(message.get("text", "")).strip()),
+        "reply_count": int(message.get("reply_count") or 0),
+        "files": files,
+    }
+
+
+def _download_thread_files(
+    client: WebClient,
+    messages: list[dict[str, Any]],
+    files_dir: Path,
+    existing_download_map: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    existing = existing_download_map if isinstance(existing_download_map, dict) else {}
+    results: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for message in messages:
+        for file_info in _extract_message_files(message):
+            file_id = str(file_info.get("id", "")).strip()
+            if not file_id or file_id in seen_ids:
+                continue
+            seen_ids.add(file_id)
+            previous = existing.get(file_id)
+            if previous and str(previous.get("local_path", "")).strip():
+                previous_path = Path(str(previous.get("local_path", "")).strip())
+                if previous_path.exists():
+                    normalized = dict(previous)
+                    normalized["name"] = _normalize_unicode(str(normalized.get("name", "")).strip())
+                    normalized["local_path"] = str(previous_path)
+                    results.append(normalized)
+                    continue
+            results.append(_download_slack_file(client=client, file_info=file_info, files_dir=files_dir))
+    return results
+
+
+def _extract_message_files(message: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_files = message.get("files")
+    if not isinstance(raw_files, list):
+        return []
+    return [item for item in raw_files if isinstance(item, dict)]
+
+
+def _download_slack_file(client: WebClient, file_info: dict[str, Any], files_dir: Path) -> dict[str, Any]:
+    file_id = str(file_info.get("id", "")).strip()
+    file_name = _normalize_unicode(str(file_info.get("name", "")).strip()) or (file_id or "attachment")
+    size = int(file_info.get("size") or 0)
+    if size > QA_MEMORY_MAX_DOWNLOAD_BYTES:
+        return {
+            "id": file_id,
+            "name": file_name,
+            "size": size,
+            "status": "skipped_too_large",
+            "local_path": "",
+            "error": f"file exceeds {QA_MEMORY_MAX_DOWNLOAD_BYTES} bytes limit",
+        }
+
+    download_url = str(file_info.get("url_private_download") or file_info.get("url_private") or "").strip()
+    if not download_url:
+        return {
+            "id": file_id,
+            "name": file_name,
+            "size": size,
+            "status": "skipped_no_url",
+            "local_path": "",
+            "error": "missing url_private/url_private_download",
+        }
+
+    safe_name = _make_safe_filename(file_name, fallback=file_id or "attachment", prefix=file_id)
+    target_path = files_dir / safe_name
+    request = Request(download_url, headers={"Authorization": f"Bearer {client.token}"})
+    try:
+        with urlopen(request, timeout=60) as response:  # noqa: S310
+            target_path.write_bytes(response.read())
+    except HTTPError as exc:
+        return {
+            "id": file_id,
+            "name": file_name,
+            "size": size,
+            "status": "download_failed",
+            "local_path": "",
+            "error": f"HTTPError {exc.code}",
+        }
+    except URLError as exc:
+        return {
+            "id": file_id,
+            "name": file_name,
+            "size": size,
+            "status": "download_failed",
+            "local_path": "",
+            "error": f"URLError {exc.reason}",
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "id": file_id,
+            "name": file_name,
+            "size": size,
+            "status": "download_failed",
+            "local_path": "",
+            "error": str(exc),
+        }
+
+    return {
+        "id": file_id,
+        "name": file_name,
+        "size": size,
+        "status": "downloaded",
+        "local_path": str(target_path),
+        "error": "",
+    }
+
+
+def _make_safe_filename(raw_name: str, fallback: str, prefix: str = "") -> str:
+    sanitized = "".join(ch if ch not in '<>:"/\\|?*' else "_" for ch in _normalize_unicode((raw_name or "").strip()))
+    sanitized = sanitized.rstrip(" .")
+    if not sanitized:
+        sanitized = fallback
+    if prefix:
+        sanitized = f"{prefix}_{sanitized}"
+    return sanitized[:180]
+
+
+def _thread_key(channel_id: str, thread_ts: str) -> str:
+    return f"{str(channel_id or '').strip()}:{str(thread_ts or '').strip()}"
+
+
+def _find_existing_memory_archives(settings: Settings, *, channel_id: str, thread_ts: str) -> list[Path]:
+    memory_root = Path(settings.artifact_root) / "_memory"
+    if not memory_root.exists():
+        return []
+    matches: list[tuple[str, Path]] = []
+    target_key = _thread_key(channel_id, thread_ts)
+    for directory in memory_root.iterdir():
+        if not directory.is_dir() or not directory.name.startswith("MEM-"):
+            continue
+        manifest = _read_json_if_exists(directory / "thread_manifest.json", default={})
+        if not isinstance(manifest, dict):
+            continue
+        candidate_key = str(manifest.get("thread_key") or _thread_key(manifest.get("channel_id", ""), manifest.get("thread_ts", ""))).strip()
+        if candidate_key != target_key:
+            continue
+        sort_key = str(manifest.get("first_captured_at") or manifest.get("captured_at") or "")
+        matches.append((sort_key, directory))
+    matches.sort(key=lambda item: (item[0], item[1].name))
+    return [directory for _, directory in matches]
+
+
+def _select_canonical_memory_archive(matches: list[Path]) -> Path | None:
+    return matches[0] if matches else None
+
+
+def _read_json_if_exists(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _merge_download_records(existing: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for source in (existing, fresh):
+        for item in source:
+            if not isinstance(item, dict):
+                continue
+            file_id = str(item.get("id", "")).strip()
+            if not file_id:
+                continue
+            if file_id not in merged:
+                order.append(file_id)
+                merged[file_id] = dict(item)
+                continue
+            current = merged[file_id]
+            for key, value in item.items():
+                if value not in ("", None) and value != []:
+                    current[key] = value
+            merged[file_id] = current
+    return [merged[file_id] for file_id in order]
+
+
+def _merge_thread_messages(existing: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for source in (existing, fresh):
+        for item in source:
+            if not isinstance(item, dict):
+                continue
+            ts = _normalize_unicode(str(item.get("ts", "")).strip())
+            if not ts:
+                continue
+            candidate = dict(item)
+            if ts not in merged:
+                order.append(ts)
+                merged[ts] = candidate
+                continue
+            current = merged[ts]
+            for key, value in candidate.items():
+                if key == "files" and isinstance(value, list):
+                    current_files = current.get("files") if isinstance(current.get("files"), list) else []
+                    current["files"] = _merge_file_refs(current_files, value)
+                elif value not in ("", None) and value != []:
+                    current[key] = value
+            merged[ts] = current
+    return [merged[ts] for ts in sorted(order, key=lambda value: float(value) if value.replace('.', '', 1).isdigit() else value)]
+
+
+def _merge_file_refs(existing: list[dict[str, Any]], fresh: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for source in (existing, fresh):
+        for item in source:
+            if not isinstance(item, dict):
+                continue
+            file_id = str(item.get("id", "")).strip()
+            if not file_id:
+                continue
+            if file_id not in merged:
+                order.append(file_id)
+                merged[file_id] = dict(item)
+                continue
+            current = merged[file_id]
+            for key, value in item.items():
+                if value not in ("", None) and value != []:
+                    current[key] = value
+            merged[file_id] = current
+    return [merged[file_id] for file_id in order]
+
+
+def _normalize_unicode(raw: str) -> str:
+    return unicodedata.normalize("NFC", str(raw or ""))
+
+
+def _can_auto_join_channel(channel_id: str) -> bool:
+    return str(channel_id or "").startswith("C")
+
+
+def _try_join_channel(client: WebClient, channel_id: str) -> bool:
+    try:
+        client.conversations_join(channel=channel_id)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _LOG.warning("Slack channel auto-join failed channel=%s exc=%s", channel_id, exc)
+        return False
+
+
+def _build_thread_access_error(channel_id: str, original: SlackApiError) -> ValueError:
+    error_code = str(original.response.get("error", "")).strip()
+    if error_code != "not_in_channel":
+        return ValueError(f"Slack thread read failed: {error_code or type(original).__name__}")
+    if str(channel_id or "").startswith("G"):
+        return ValueError("The app is not a member of this private channel. Invite the app to the channel and try again.")
+    if str(channel_id or "").startswith("C"):
+        return ValueError(
+            "The app is not a member of this public channel. Add the app to the channel, or grant channels:join and reinstall the app."
+        )
+    return ValueError("The app is not in this conversation. Add or invite the app, then try again.")

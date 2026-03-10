@@ -48,6 +48,8 @@
 - 사용자에게 보이는 실행 모드 문구는 `Full QA (E2E)`로 고정한다.
 - agent도 사용자 선택이 아니라 `.env`의 `DEFAULT_AGENT`를 사용한다. 지원 범위를 벗어나면 `openai`로 fallback한다.
 - 런타임은 legacy mode alias(`qa_smoke`, `landing_page_qa`)가 들어와도 실제 실행 시 `full_web_qa`로 정규화한다.
+- Slack 앱에는 QA 스레드를 raw thread archive로 저장하기 위한 message shortcut `save_thread_to_qa_memory`가 추가되었다.
+- planning 단계는 local vector memory index를 조회해 `memory_retrieval.json`을 생성하고, test case/probe 계획에 과거 human QA memory를 반영한다.
 
 ## 3. 현재 실행 흐름
 현재 기본 실행 흐름은 아래와 같다.
@@ -311,6 +313,17 @@ python -m slackbot_for_web.engine_cli --rerun-failures-from JOB-1234abcd --max-c
 python -m slackbot_for_web.dashboard --host 127.0.0.1 --port 8787
 ```
 
+### Slack thread memory card 추출
+```powershell
+python -m slackbot_for_web.memory_cards --memory-id MEM-fb9c644c
+```
+
+### Local vector memory index build/query
+```powershell
+python -m slackbot_for_web.memory_index build
+python -m slackbot_for_web.memory_index query --text "모바일 정렬 안맞음 스크롤 깜빡임 플로팅 CTA depth" --top-k 5
+```
+
 ### Slack 앱 실행
 ```powershell
 webqa-slack
@@ -355,3 +368,4 @@ CLI도 같은 방향으로 정리되어 `--mode full_web_qa`를 기본 진입점
 - `docs/dashboard_ui.md`: 대시보드/UI 실행 메모
 - `docs/vla_strategy_for_web_qa.md`: VLA 도입 전략과 시각적 상호작용 QA 확장 방향
 - `docs/artifact_mode_migration_plan.md`: artifact의 `preset -> mode` 마이그레이션 계획
+- `docs/slack_thread_vector_memory_plan.md`: Slack QA 스레드를 issue memory card와 local vector DB로 연결하는 실험 계획

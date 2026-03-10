@@ -17,12 +17,15 @@ dependencies = [
   "openai>=1.50.0",
   "pydantic>=2.8.0",
   "langgraph>=0.2.40",
+  "sentence-transformers>=3.4.1",
 ]
 
 [project.scripts]
 webqa-slack = "slackbot_for_web.main:main"
 webqa-engine = "slackbot_for_web.engine_cli:main"
 webqa-dashboard = "slackbot_for_web.dashboard:main"
+webqa-memory-extract = "slackbot_for_web.memory_cards:main"
+webqa-memory-index = "slackbot_for_web.memory_index:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
