@@ -1,6 +1,6 @@
 ﻿# 현재 엔진 버전 문서 (v0.2.0)
 
-작성일: 2026-03-07  
+작성일: 2026-03-11  
 기준 코드 버전: `slackbot-for-web 0.2.0`
 
 ## 문서 목적
@@ -50,6 +50,7 @@
 - 런타임은 legacy mode alias(`qa_smoke`, `landing_page_qa`)가 들어와도 실제 실행 시 `full_web_qa`로 정규화한다.
 - Slack 앱에는 QA 스레드를 raw thread archive로 저장하기 위한 message shortcut `save_thread_to_qa_memory`가 추가되었다.
 - planning 단계는 local vector memory index를 조회해 `memory_retrieval.json`을 생성하고, test case/probe 계획에 과거 human QA memory를 반영한다.
+- local vector memory의 기본 임베딩 모델은 `intfloat/multilingual-e5-large-instruct`다.
 
 ## 3. 현재 실행 흐름
 현재 기본 실행 흐름은 아래와 같다.
@@ -247,6 +248,44 @@ CLI는 특정 run의 실패 케이스를 골라 배치 재실행할 수 있다.
 
 즉, 현재 버전은 `VLA 단독 QA`가 아니라 `DOM + deterministic browser actions + LLM report synthesis` 형태의 1차 하이브리드다.
 
+## 9.2 현재 적용된 Slack thread vector memory
+현재 엔진에는 사람 QA 스레드를 메모리 자산으로 쓰는 local vector retrieval 경로가 들어가 있다.
+
+### 현재 구조
+1. Slack shortcut `Save Thread to QA Memory`
+2. raw thread archive 저장 (`artifacts/_memory/MEM-*/`)
+3. `issue_memory_cards.json` 추출
+4. local vector index build/query
+5. planning 단계 retrieval
+6. `memory_retrieval.json` 생성 및 `test_cases.json` / `visual_probe_plan` 반영
+
+### 현재 운영 상태
+- retrieval backend: `sentence_transformers`
+- 기본 임베딩 모델: `intfloat/multilingual-e5-large-instruct`
+- memory archive는 같은 `channel_id + thread_ts` 기준으로 merge/dedupe 된다
+- message/file/card 단위 중복 방지가 들어가 있다
+
+### 현재 검증 수치
+benchmark artifact:
+- `artifacts/_runtime/vector_memory/benchmark_20260310T165457Z.json`
+
+현재 benchmark 결과:
+- `top1_accuracy = 0.9`
+- `top3_accuracy = 1.0`
+- `mrr = 0.95`
+
+### 현재 실제 run 연결 상태
+검증 run:
+- `JOB-112efc31`
+- target: `https://maroon-yards-063878.framer.app/alphakey-insight-rm`
+
+확인된 점:
+- `memory_retrieval.json` 생성
+- `test_cases.json`에 `memory_hints` 생성
+- visual probe 쪽에 `probe_directives` 반영
+
+즉, retrieval은 이미 planning 단계의 실제 입력으로 사용 중이다.
+
 ## 10. 대시보드/UI 현재 상태
 현재 대시보드는 실행 엔진이라기보다 `리뷰/추적 도구`다.
 
@@ -322,6 +361,7 @@ python -m slackbot_for_web.memory_cards --memory-id MEM-fb9c644c
 ```powershell
 python -m slackbot_for_web.memory_index build
 python -m slackbot_for_web.memory_index query --text "모바일 정렬 안맞음 스크롤 깜빡임 플로팅 CTA depth" --top-k 5
+python -m slackbot_for_web.memory_index compare --top-k 5
 ```
 
 ### Slack 앱 실행
@@ -348,6 +388,7 @@ CLI도 같은 방향으로 정리되어 `--mode full_web_qa`를 기본 진입점
 - built-in mode catalog는 이제 `full_web_qa` 하나만 노출된다
 - 대시보드는 운영 가시성은 높였지만, 비개발자용 제품 수준 UX로 완결된 상태는 아니다
 - full-domain E2E 품질은 계속 회귀 기반으로 다듬어야 한다
+- memory retrieval은 usable 수준까지 올라왔지만, older memory manifest에 `target_url / job_url / host`가 부족해 같은 도메인/같은 템플릿 우선 회수는 아직 약하다
 
 ## 15. 다음 문서 갱신 시점
 아래 항목 중 하나라도 바뀌면 이 문서를 갱신한다.
