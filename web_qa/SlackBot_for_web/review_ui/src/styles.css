@@ -769,6 +769,150 @@ a {
   line-height: 1.5;
 }
 
+.memory-query-text {
+  margin: 0;
+  color: #203245;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.memory-hint-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.memory-hint-group,
+.memory-meta-group {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-hint-group > span,
+.memory-meta-group > span {
+  color: #5f748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.memory-hit-list {
+  display: grid;
+  gap: 10px;
+}
+
+.memory-hit-card {
+  border: 1px solid #d7e1ee;
+  border-radius: 12px;
+  background: #f9fbff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.memory-hit-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.memory-hit-title {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-hit-title strong {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #17283a;
+}
+
+.memory-hit-pills,
+.memory-hit-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memory-hit-copy,
+.memory-hit-note,
+.memory-hit-section {
+  margin: 0;
+  color: #203245;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.memory-hit-note,
+.memory-hit-section {
+  color: #5f748b;
+  font-size: 12px;
+}
+
+.memory-hit-meta {
+  display: grid;
+  gap: 10px;
+}
+
+.test-case-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.test-case-plan-card {
+  border: 1px solid #d7e1ee;
+  border-radius: 12px;
+  background: #fff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.test-case-plan-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.test-case-plan-title {
+  display: grid;
+  gap: 8px;
+}
+
+.test-case-plan-title strong {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #17283a;
+}
+
+.test-case-plan-pills,
+.test-case-plan-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.test-case-plan-url,
+.test-case-plan-copy {
+  margin: 0;
+  color: #203245;
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: break-word;
+}
+
+.test-case-plan-url {
+  color: #5f748b;
+  font-size: 12px;
+}
+
+.test-case-plan-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .tag-list {
   margin: 0;
   padding: 0;
@@ -1359,6 +1503,14 @@ pre {
   }
 
   .visual-probe-head {
+    flex-direction: column;
+  }
+
+  .memory-hit-head {
+    flex-direction: column;
+  }
+
+  .test-case-plan-head {
     flex-direction: column;
   }
 

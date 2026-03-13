@@ -164,6 +164,47 @@ MEMORY_ISSUE_FOCUS_TERMS: dict[str, tuple[str, ...]] = {
     "responsive_overflow": ("가려짐", "좁아", "작아", "iphone"),
 }
 
+MEMORY_PAGE_ROLE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "landing": ("home", "homepage", "메인", "랜딩", "hero"),
+    "pricing": ("pricing", "price", "요금", "가격", "플랜"),
+    "product": ("product", "products", "solution", "service", "feature"),
+    "about": ("about", "company", "회사", "브랜드"),
+    "contact": ("contact", "문의", "상담", "demo", "consult"),
+    "faq": ("faq", "자주 묻는", "질문", "accordion"),
+    "blog": ("blog", "news", "article", "post", "insight"),
+    "docs": ("docs", "documentation", "guide", "help", "문서", "가이드"),
+    "careers": ("career", "careers", "jobs", "채용"),
+    "form_page": ("form", "input", "신청", "문의폼", "상담폼"),
+}
+
+MEMORY_COMPONENT_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "header_nav": ("header", "gnb", "lnb", "menu", "nav"),
+    "footer_nav": ("footer", "푸터", "하단", "ci"),
+    "hero_cta": ("hero", "kv", "메인 비주얼"),
+    "primary_cta": ("cta", "문의", "상담", "demo", "download", "trial"),
+    "floating_cta": ("floating", "sticky", "플로팅", "sticky cta", "floating cta"),
+    "lead_form": ("form", "input", "문의폼", "상담폼", "신청폼"),
+    "modal": ("modal", "popup", "overlay", "drawer", "팝업"),
+    "accordion": ("accordion", "faq", "토글"),
+    "video_player": ("video", "동영상", "player", "플레이어"),
+    "share_meta": ("preview", "og image", "미리보기", "thumbnail"),
+}
+
+MEMORY_INTERACTION_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "click_navigation": ("cta", "button", "click", "링크", "문의", "상담"),
+    "hover_navigation": ("hover", "dropdown", "menu"),
+    "form_interaction": ("form", "input", "문의폼", "상담폼", "신청폼"),
+    "accordion_toggle": ("faq", "accordion"),
+    "modal_toggle": ("modal", "popup", "overlay", "drawer"),
+    "share_preview": ("preview", "og", "thumbnail", "공유"),
+}
+
+MEMORY_LAYOUT_HINTS_BY_COMPONENT: dict[str, tuple[str, ...]] = {
+    "floating_cta": ("overlay_depth",),
+    "lead_form": ("viewport_overflow",),
+    "hero_cta": ("animation_stability",),
+}
+
 ProviderKind = Literal["gemini", "openai"]
 
 
@@ -392,6 +433,9 @@ def _build_visual_probe_plan(
     execution_tier: str,
     page_context: dict[str, Any] | None,
     memory_issue_types: list[str] | None = None,
+    memory_component_types: list[str] | None = None,
+    memory_interaction_kinds: list[str] | None = None,
+    memory_layout_signals: list[str] | None = None,
 ) -> dict[str, Any]:
     context = page_context if isinstance(page_context, dict) else {}
     interaction_targets = _safe_obj_list(context.get("interaction_targets"), limit=12)
@@ -402,6 +446,15 @@ def _build_visual_probe_plan(
     cta_count = _as_int(interaction_hints.get("cta_count"))
     memory_issue_type_list = _safe_str_list(memory_issue_types or [], limit=20)
     memory_issue_type_set = {issue_type.strip().lower() for issue_type in memory_issue_type_list if issue_type.strip()}
+    memory_component_type_set = {
+        value.strip().lower() for value in _safe_str_list(memory_component_types or [], limit=12) if value.strip()
+    }
+    memory_interaction_kind_set = {
+        value.strip().lower() for value in _safe_str_list(memory_interaction_kinds or [], limit=12) if value.strip()
+    }
+    memory_layout_signal_set = {
+        value.strip().lower() for value in _safe_str_list(memory_layout_signals or [], limit=12) if value.strip()
+    }
     probe_directives = _build_memory_probe_directives(memory_issue_type_list)
 
     probe_kinds: list[str] = []
@@ -439,6 +492,18 @@ def _build_visual_probe_plan(
         probe_kinds.append("hover_probe")
     if memory_issue_type_set.intersection({"text_wrap", "mobile_alignment", "spacing_layout", "image_render", "footer_alignment"}):
         probe_kinds.append("scroll_probe")
+    if memory_component_type_set.intersection({"floating_cta", "lead_form", "modal"}) and (anchor_count > 0 or button_count > 0 or cta_count > 0):
+        probe_kinds.append("clickability_probe")
+    if memory_component_type_set.intersection({"header_nav", "accordion"}) and (hover_count > 0 or button_count > 0 or cta_count > 0):
+        probe_kinds.append("hover_probe")
+    if memory_interaction_kind_set.intersection({"hover_navigation", "accordion_toggle"}) and (hover_count > 0 or button_count > 0 or cta_count > 0):
+        probe_kinds.append("hover_probe")
+    if memory_interaction_kind_set.intersection({"click_navigation", "modal_toggle", "form_interaction", "share_preview"}):
+        probe_kinds.append("clickability_probe")
+    if memory_interaction_kind_set.intersection({"scroll_triggered_animation"}) or memory_layout_signal_set.intersection(
+        {"alignment", "spacing", "text_wrap", "animation_stability", "overlay_depth", "viewport_overflow"}
+    ):
+        probe_kinds.append("scroll_probe")
 
     deduped_kinds: list[str] = []
     seen: set[str] = set()
@@ -460,6 +525,9 @@ def _build_visual_probe_plan(
             "nav_candidate_count": _as_int(interaction_hints.get("nav_candidate_count")),
         },
         "memory_issue_types": memory_issue_type_list,
+        "memory_component_types": sorted(memory_component_type_set),
+        "memory_interaction_kinds": sorted(memory_interaction_kind_set),
+        "memory_layout_signals": sorted(memory_layout_signal_set),
         "probe_directives": probe_directives,
         "source": "domain_context_map",
     }
@@ -581,6 +649,152 @@ def _compress_memory_query_label(value: Any) -> str:
     return ""
 
 
+def _memory_pattern_texts(job_url: str, final_url: str, pages: list[dict[str, Any]]) -> list[str]:
+    texts: list[str] = [str(job_url or ""), str(final_url or "")]
+    for page in pages[:4]:
+        texts.append(str(page.get("title") or ""))
+        texts.append(str(page.get("text_preview") or ""))
+        for label in _select_memory_query_labels(page):
+            texts.append(label)
+        for form_payload in _safe_obj_list(page.get("forms"), limit=6):
+            texts.append(str(form_payload.get("action") or ""))
+            texts.append(str(form_payload.get("method") or ""))
+        for landmark in _safe_str_list(page.get("landmarks"), limit=10):
+            texts.append(landmark)
+    return [text for text in texts if _looks_meaningful_memory_query_fragment(text)]
+
+
+def _memory_pattern_match(texts: list[str], keyword_map: dict[str, tuple[str, ...]], *, limit: int) -> list[str]:
+    normalized_texts = [str(text or "").lower() for text in texts if str(text or "").strip()]
+    matches: list[str] = []
+    for key, keywords in keyword_map.items():
+        if any(keyword in text for keyword in keywords for text in normalized_texts):
+            matches.append(key)
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in matches:
+        lowered = item.lower().strip()
+        if lowered and lowered not in seen:
+            deduped.append(item)
+            seen.add(lowered)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _infer_memory_framework_hints(canonical_host: str, final_url: str) -> list[str]:
+    haystacks = [str(canonical_host or "").lower(), str(final_url or "").lower()]
+    hints: list[str] = []
+    if any("framer.app" in value or ".framer." in value or "framer" in value for value in haystacks):
+        hints.append("framer")
+    if any("webflow" in value for value in haystacks):
+        hints.append("webflow")
+    if any("shopify" in value for value in haystacks):
+        hints.append("shopify")
+    return hints[:4]
+
+
+def _infer_memory_page_role_hints(job_url: str, final_url: str, pages: list[dict[str, Any]]) -> list[str]:
+    texts = _memory_pattern_texts(job_url, final_url, pages)
+    roles = _memory_pattern_match(texts, MEMORY_PAGE_ROLE_KEYWORDS, limit=6)
+    parsed = urlparse(str(final_url or job_url or ""))
+    if (not parsed.path or parsed.path == "/") and "landing" not in roles:
+        roles.insert(0, "landing")
+    return roles[:6]
+
+
+def _infer_memory_component_type_hints(pages: list[dict[str, Any]]) -> list[str]:
+    texts = _memory_pattern_texts("", "", pages)
+    components = _memory_pattern_match(texts, MEMORY_COMPONENT_KEYWORDS, limit=10)
+    for page in pages[:4]:
+        if _safe_obj_list(page.get("forms"), limit=1) and "lead_form" not in components:
+            components.append("lead_form")
+        if _safe_str_list(page.get("header_links"), limit=1) and "header_nav" not in components:
+            components.append("header_nav")
+        if _safe_str_list(page.get("footer_links"), limit=1) and "footer_nav" not in components:
+            components.append("footer_nav")
+        if _safe_str_list(page.get("cta_links"), limit=1) and "primary_cta" not in components:
+            components.append("primary_cta")
+        for target in _safe_obj_list(page.get("interaction_targets"), limit=12):
+            signal = str(target.get("signal") or "").strip().lower()
+            label = str(target.get("label") or "").strip().lower()
+            if signal == "cta" and "primary_cta" not in components:
+                components.append("primary_cta")
+            if signal == "nav" and "header_nav" not in components:
+                components.append("header_nav")
+            if ("faq" in label or "accordion" in label) and "accordion" not in components:
+                components.append("accordion")
+    return components[:10]
+
+
+def _infer_memory_interaction_kind_hints(pages: list[dict[str, Any]], component_type_hints: list[str]) -> list[str]:
+    texts = _memory_pattern_texts("", "", pages)
+    interactions = _memory_pattern_match(texts, MEMORY_INTERACTION_KEYWORDS, limit=8)
+    for page in pages[:4]:
+        interaction_hints = dict(page.get("interaction_hints") or {})
+        if _as_int(interaction_hints.get("hover_candidate_count")) > 0 and "hover_navigation" not in interactions:
+            interactions.append("hover_navigation")
+        if _as_int(interaction_hints.get("anchor_count")) > 0 or _as_int(interaction_hints.get("cta_count")) > 0:
+            if "click_navigation" not in interactions:
+                interactions.append("click_navigation")
+        if _safe_obj_list(page.get("forms"), limit=1) and "form_interaction" not in interactions:
+            interactions.append("form_interaction")
+    if any(component == "accordion" for component in component_type_hints) and "accordion_toggle" not in interactions:
+        interactions.append("accordion_toggle")
+    if any(component == "modal" for component in component_type_hints) and "modal_toggle" not in interactions:
+        interactions.append("modal_toggle")
+    return interactions[:8]
+
+
+def _infer_memory_layout_signal_hints(
+    component_type_hints: list[str],
+    interaction_kind_hints: list[str],
+) -> list[str]:
+    layout_hints: list[str] = []
+    if "scroll_triggered_animation" in interaction_kind_hints:
+        layout_hints.append("animation_stability")
+    for component in component_type_hints:
+        layout_hints.extend(MEMORY_LAYOUT_HINTS_BY_COMPONENT.get(component, ()))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in layout_hints:
+        lowered = item.lower().strip()
+        if lowered and lowered not in seen:
+            deduped.append(item)
+            seen.add(lowered)
+        if len(deduped) >= 8:
+            break
+    return deduped
+
+
+def _build_memory_query_hints(
+    *,
+    job_url: str,
+    final_url: str,
+    canonical_host: str,
+    pages: list[dict[str, Any]],
+) -> dict[str, Any]:
+    framework_hints = _infer_memory_framework_hints(canonical_host=canonical_host, final_url=final_url or job_url)
+    page_role_hints = _infer_memory_page_role_hints(job_url=job_url, final_url=final_url, pages=pages)
+    component_type_hints = _infer_memory_component_type_hints(pages=pages)
+    interaction_kind_hints = _infer_memory_interaction_kind_hints(
+        pages=pages,
+        component_type_hints=component_type_hints,
+    )
+    layout_signal_hints = _infer_memory_layout_signal_hints(
+        component_type_hints=component_type_hints,
+        interaction_kind_hints=interaction_kind_hints,
+    )
+    return {
+        "platform": "",
+        "page_roles": page_role_hints,
+        "component_types": component_type_hints,
+        "interaction_kinds": interaction_kind_hints,
+        "layout_signals": layout_signal_hints,
+        "framework_hints": framework_hints,
+    }
+
+
 def _build_memory_retrieval_query(
     *,
     job_url: str,
@@ -633,10 +847,22 @@ def _build_memory_retrieval_payload(
         canonical_host=canonical_host,
         pages=pages,
     )
+    query_hints = _build_memory_query_hints(
+        job_url=ctx.job.url,
+        final_url=final_url,
+        canonical_host=canonical_host,
+        pages=pages,
+    )
     retrieval = retrieve_issue_memory_cards(
         settings=ctx.settings,
         query_text=query_text,
         top_k=MEMORY_RETRIEVAL_TOP_K,
+        platform_hint=str(query_hints.get("platform") or "").strip() or None,
+        page_role_hints=_safe_str_list(query_hints.get("page_roles"), limit=8),
+        component_type_hints=_safe_str_list(query_hints.get("component_types"), limit=12),
+        interaction_kind_hints=_safe_str_list(query_hints.get("interaction_kinds"), limit=12),
+        layout_signal_hints=_safe_str_list(query_hints.get("layout_signals"), limit=12),
+        framework_hints=_safe_str_list(query_hints.get("framework_hints"), limit=8),
     )
     hits = _safe_obj_list(retrieval.get("hits"), limit=MEMORY_RETRIEVAL_TOP_K)
     trimmed_hits: list[dict[str, Any]] = []
@@ -650,9 +876,16 @@ def _build_memory_retrieval_payload(
                 "issue_types": _safe_str_list(hit.get("issue_types"), limit=12),
                 "platform": str(hit.get("platform") or "").strip(),
                 "section_hint": _trim_text(str(hit.get("section_hint") or ""), 120),
+                "page_roles": _safe_str_list(hit.get("page_roles"), limit=8),
+                "component_types": _safe_str_list(hit.get("component_types"), limit=12),
+                "interaction_kinds": _safe_str_list(hit.get("interaction_kinds"), limit=12),
+                "layout_signals": _safe_str_list(hit.get("layout_signals"), limit=12),
+                "framework_hints": _safe_str_list(hit.get("framework_hints"), limit=8),
                 "severity_hint": str(hit.get("severity_hint") or "").strip(),
                 "source_message_ts": str(hit.get("source_message_ts") or "").strip(),
                 "evidence_count": _as_int(hit.get("evidence_count")),
+                "base_score": round(float(hit.get("base_score") or 0.0), 4),
+                "metadata_boost": round(float(hit.get("metadata_boost") or 0.0), 4),
                 "observation": _trim_text(str(hit.get("observation") or ""), 240),
                 "expected_behavior": _trim_text(str(hit.get("expected_behavior") or ""), 240),
             }
@@ -666,6 +899,14 @@ def _build_memory_retrieval_payload(
         "created_at": datetime.now(timezone.utc).isoformat(),
         "mode": _normalize_mode_key(ctx.job.mode_key),
         "query_text": query_text,
+        "query_hints": {
+            "platform": str(query_hints.get("platform") or "").strip(),
+            "page_roles": _safe_str_list(query_hints.get("page_roles"), limit=8),
+            "component_types": _safe_str_list(query_hints.get("component_types"), limit=12),
+            "interaction_kinds": _safe_str_list(query_hints.get("interaction_kinds"), limit=12),
+            "layout_signals": _safe_str_list(query_hints.get("layout_signals"), limit=12),
+            "framework_hints": _safe_str_list(query_hints.get("framework_hints"), limit=8),
+        },
         "enabled": bool(retrieval.get("enabled")),
         "backend": str(retrieval.get("backend") or "").strip(),
         "top_k": _as_int(retrieval.get("top_k")) or MEMORY_RETRIEVAL_TOP_K,
@@ -704,6 +945,12 @@ def _select_memory_hints_for_case(
             str(hit.get("summary") or "").strip().lower(),
             str(hit.get("observation") or "").strip().lower(),
             str(hit.get("section_hint") or "").strip().lower(),
+            " ".join(_safe_str_list(hit.get("page_roles"), limit=8)).lower(),
+            " ".join(_safe_str_list(hit.get("component_types"), limit=12)).lower(),
+            " ".join(_safe_str_list(hit.get("interaction_kinds"), limit=12)).lower(),
+            " ".join(_safe_str_list(hit.get("layout_signals"), limit=12)).lower(),
+            " ".join(_safe_str_list(hit.get("framework_hints"), limit=8)).lower(),
+            " ".join(_safe_str_list(hit.get("pattern_tags"), limit=24)).lower(),
         ]
         matched = False
         for label in labels:
@@ -721,13 +968,33 @@ def _select_memory_hints_for_case(
             break
 
     issue_type_set: set[str] = set()
+    page_role_set: set[str] = set()
+    component_type_set: set[str] = set()
+    interaction_kind_set: set[str] = set()
+    layout_signal_set: set[str] = set()
+    framework_hint_set: set[str] = set()
     for hit in matched_hits:
         for issue_type in _safe_str_list(hit.get("issue_types"), limit=12):
             issue_type_set.add(issue_type)
+        for value in _safe_str_list(hit.get("page_roles"), limit=8):
+            page_role_set.add(value)
+        for value in _safe_str_list(hit.get("component_types"), limit=12):
+            component_type_set.add(value)
+        for value in _safe_str_list(hit.get("interaction_kinds"), limit=12):
+            interaction_kind_set.add(value)
+        for value in _safe_str_list(hit.get("layout_signals"), limit=12):
+            layout_signal_set.add(value)
+        for value in _safe_str_list(hit.get("framework_hints"), limit=8):
+            framework_hint_set.add(value)
 
     return {
         "enabled": bool(retrieval.get("enabled")),
         "issue_types": sorted(issue_type_set),
+        "page_roles": sorted(page_role_set),
+        "component_types": sorted(component_type_set),
+        "interaction_kinds": sorted(interaction_kind_set),
+        "layout_signals": sorted(layout_signal_set),
+        "framework_hints": sorted(framework_hint_set),
         "hit_count": len(matched_hits),
         "hits": matched_hits,
     }
@@ -829,6 +1096,7 @@ def _langgraph_plan_node(ctx: RunContext, state: PipelineState) -> PipelineState
             "enabled": bool(memory_retrieval.get("enabled")),
             "backend": str(memory_retrieval.get("backend") or "").strip(),
             "query_text": _trim_text(str(memory_retrieval.get("query_text") or ""), 600),
+            "query_hints": dict(memory_retrieval.get("query_hints") or {}),
             "total_hits": _as_int(memory_retrieval.get("total_hits")),
             "issue_type_counts": dict(memory_retrieval.get("issue_type_counts") or {}),
             "top_hit_cards": [
@@ -838,6 +1106,9 @@ def _langgraph_plan_node(ctx: RunContext, state: PipelineState) -> PipelineState
                     "score": round(float(hit.get("score") or 0.0), 4),
                     "summary": _trim_text(str(hit.get("summary") or ""), 180),
                     "issue_types": _safe_str_list(hit.get("issue_types"), limit=12),
+                    "page_roles": _safe_str_list(hit.get("page_roles"), limit=8),
+                    "component_types": _safe_str_list(hit.get("component_types"), limit=12),
+                    "interaction_kinds": _safe_str_list(hit.get("interaction_kinds"), limit=12),
                 }
                 for hit in _safe_obj_list(memory_retrieval.get("hits"), limit=3)
             ],
@@ -878,6 +1149,9 @@ def _langgraph_plan_node(ctx: RunContext, state: PipelineState) -> PipelineState
             execution_tier=execution_tier,
             page_context=page_context,
             memory_issue_types=memory_hints.get("issue_types"),
+            memory_component_types=memory_hints.get("component_types"),
+            memory_interaction_kinds=memory_hints.get("interaction_kinds"),
+            memory_layout_signals=memory_hints.get("layout_signals"),
         )
         test_cases.append(
             {

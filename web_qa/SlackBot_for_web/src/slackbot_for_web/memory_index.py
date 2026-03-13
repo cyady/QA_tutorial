@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from slackbot_for_web.config import Settings, load_settings
 
-INDEX_SCHEMA_VERSION = 2
+INDEX_SCHEMA_VERSION = 3
 HASH_BACKEND = "hash_char_ngram_v1"
 SENTENCE_TRANSFORMERS_BACKEND = "sentence_transformers"
 HASH_VECTOR_DIMENSIONS = 384
@@ -179,6 +179,12 @@ def build_local_memory_index(
                 "issue_types": _safe_str_list(card.get("issue_types"), limit=12),
                 "platform": str(card.get("platform", "")).strip(),
                 "section_hint": str(card.get("section_hint", "")).strip(),
+                "page_roles": _safe_str_list(card.get("page_roles"), limit=8),
+                "component_types": _safe_str_list(card.get("component_types"), limit=12),
+                "interaction_kinds": _safe_str_list(card.get("interaction_kinds"), limit=12),
+                "layout_signals": _safe_str_list(card.get("layout_signals"), limit=12),
+                "framework_hints": _safe_str_list(card.get("framework_hints"), limit=8),
+                "pattern_tags": _safe_str_list(card.get("pattern_tags"), limit=24),
                 "summary": str(card.get("summary", "")).strip(),
                 "observation": str(card.get("observation", "")).strip(),
                 "expected_behavior": str(card.get("expected_behavior", "")).strip(),
@@ -218,6 +224,11 @@ def retrieve_issue_memory_cards(
     *,
     top_k: int = DEFAULT_RETRIEVAL_TOP_K,
     platform_hint: str | None = None,
+    page_role_hints: list[str] | None = None,
+    component_type_hints: list[str] | None = None,
+    interaction_kind_hints: list[str] | None = None,
+    layout_signal_hints: list[str] | None = None,
+    framework_hints: list[str] | None = None,
     backend: str | None = None,
     model_name: str | None = None,
 ) -> dict[str, Any]:
@@ -235,6 +246,11 @@ def retrieve_issue_memory_cards(
                 query_text=query_text,
                 top_k=top_k,
                 platform_hint=platform_hint,
+                page_role_hints=page_role_hints,
+                component_type_hints=component_type_hints,
+                interaction_kind_hints=interaction_kind_hints,
+                layout_signal_hints=layout_signal_hints,
+                framework_hints=framework_hints,
                 backend=HASH_BACKEND,
                 model_name="",
             )
@@ -248,6 +264,11 @@ def retrieve_issue_memory_cards(
         return _empty_result(selected_backend, selected_model, query_text, top_k, reason="empty_query")
 
     platform_hint_norm = str(platform_hint or "").strip().lower()
+    page_role_hint_list = _normalize_hint_list(page_role_hints, limit=8)
+    component_type_hint_list = _normalize_hint_list(component_type_hints, limit=12)
+    interaction_kind_hint_list = _normalize_hint_list(interaction_kind_hints, limit=12)
+    layout_signal_hint_list = _normalize_hint_list(layout_signal_hints, limit=12)
+    framework_hint_list = _normalize_hint_list(framework_hints, limit=8)
     scored: list[dict[str, Any]] = []
     for record in index.get("records", []):
         if not isinstance(record, dict):
@@ -255,9 +276,51 @@ def retrieve_issue_memory_cards(
         embedding = record.get("embedding")
         if not isinstance(embedding, list):
             continue
-        score = _cosine_similarity(query_vector, embedding)
+        base_score = _cosine_similarity(query_vector, embedding)
+        boost_breakdown = {
+            "platform": 0.0,
+            "page_roles": 0.0,
+            "component_types": 0.0,
+            "interaction_kinds": 0.0,
+            "layout_signals": 0.0,
+            "framework_hints": 0.0,
+        }
+        score = base_score
         if platform_hint_norm and str(record.get("platform", "")).strip().lower() == platform_hint_norm:
-            score += 0.03
+            boost_breakdown["platform"] = 0.03
+            score += boost_breakdown["platform"]
+        boost_breakdown["page_roles"] = _score_hint_overlap(
+            page_role_hint_list,
+            record.get("page_roles"),
+            per_match=0.05,
+            max_boost=0.12,
+        )
+        boost_breakdown["component_types"] = _score_hint_overlap(
+            component_type_hint_list,
+            record.get("component_types"),
+            per_match=0.04,
+            max_boost=0.12,
+        )
+        boost_breakdown["interaction_kinds"] = _score_hint_overlap(
+            interaction_kind_hint_list,
+            record.get("interaction_kinds"),
+            per_match=0.035,
+            max_boost=0.1,
+        )
+        boost_breakdown["layout_signals"] = _score_hint_overlap(
+            layout_signal_hint_list,
+            record.get("layout_signals"),
+            per_match=0.03,
+            max_boost=0.09,
+        )
+        boost_breakdown["framework_hints"] = _score_hint_overlap(
+            framework_hint_list,
+            record.get("framework_hints"),
+            per_match=0.04,
+            max_boost=0.08,
+        )
+        metadata_boost = round(sum(boost_breakdown.values()), 4)
+        score += metadata_boost
         if score <= 0:
             continue
         scored.append(
@@ -265,15 +328,24 @@ def retrieve_issue_memory_cards(
                 "card_id": str(record.get("card_id", "")).strip(),
                 "memory_id": str(record.get("memory_id", "")).strip(),
                 "score": round(score, 4),
+                "base_score": round(base_score, 4),
+                "metadata_boost": metadata_boost,
                 "summary": str(record.get("summary", "")).strip(),
                 "issue_types": _safe_str_list(record.get("issue_types"), limit=12),
                 "platform": str(record.get("platform", "")).strip(),
                 "section_hint": str(record.get("section_hint", "")).strip(),
+                "page_roles": _safe_str_list(record.get("page_roles"), limit=8),
+                "component_types": _safe_str_list(record.get("component_types"), limit=12),
+                "interaction_kinds": _safe_str_list(record.get("interaction_kinds"), limit=12),
+                "layout_signals": _safe_str_list(record.get("layout_signals"), limit=12),
+                "framework_hints": _safe_str_list(record.get("framework_hints"), limit=8),
+                "pattern_tags": _safe_str_list(record.get("pattern_tags"), limit=24),
                 "severity_hint": str(record.get("severity_hint", "")).strip(),
                 "source_message_ts": str(record.get("source_message_ts", "")).strip(),
                 "evidence_count": len(record.get("evidence_refs") or []),
                 "observation": str(record.get("observation", "")).strip(),
                 "expected_behavior": str(record.get("expected_behavior", "")).strip(),
+                "score_breakdown": {key: round(value, 4) for key, value in boost_breakdown.items()},
             }
         )
 
@@ -289,6 +361,14 @@ def retrieve_issue_memory_cards(
         "backend": str(index.get("backend", selected_backend)).strip(),
         "model_name": str(index.get("model_name", selected_model)).strip(),
         "query_text": query_text,
+        "query_hints": {
+            "platform": platform_hint_norm,
+            "page_roles": page_role_hint_list,
+            "component_types": component_type_hint_list,
+            "interaction_kinds": interaction_kind_hint_list,
+            "layout_signals": layout_signal_hint_list,
+            "framework_hints": framework_hint_list,
+        },
         "top_k": max(1, int(top_k or DEFAULT_RETRIEVAL_TOP_K)),
         "total_hits": len(hits),
         "issue_type_counts": dict(issue_type_counter.most_common()),
@@ -483,6 +563,14 @@ def _load_or_build_index(settings: Settings, *, backend: str, model_name: str) -
         return None
     if not isinstance(payload, dict):
         return None
+    if int(payload.get("schema_version") or 0) < INDEX_SCHEMA_VERSION:
+        build_local_memory_index(settings, backend=backend, model_name=model_name)
+        try:
+            payload = json.loads(index_path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(payload, dict):
+            return None
     return payload
 
 
@@ -634,6 +722,34 @@ def _cosine_similarity(left: list[float], right: list[float]) -> float:
     if len(left) != len(right):
         return 0.0
     return sum(a * b for a, b in zip(left, right))
+
+
+def _normalize_hint_list(value: list[str] | None, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        text = _normalize_for_vector(str(item or ""))
+        if not text or text in seen:
+            continue
+        normalized.append(text)
+        seen.add(text)
+        if len(normalized) >= limit:
+            break
+    return normalized
+
+
+def _score_hint_overlap(hints: list[str], record_values: Any, *, per_match: float, max_boost: float) -> float:
+    if not hints or not isinstance(record_values, list):
+        return 0.0
+    record_set = {_normalize_for_vector(str(item or "")) for item in record_values if _normalize_for_vector(str(item or ""))}
+    if not record_set:
+        return 0.0
+    match_count = len([hint for hint in hints if hint in record_set])
+    if match_count <= 0:
+        return 0.0
+    return min(max_boost, round(match_count * per_match, 4))
 
 
 def _safe_obj_list(value: Any, limit: int) -> list[dict[str, Any]]:

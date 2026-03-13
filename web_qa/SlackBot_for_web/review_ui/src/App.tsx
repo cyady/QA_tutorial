@@ -12,6 +12,21 @@ type TestCaseView = {
   tier: string;
   stepsExecuted: number;
   evidenceRefs: string[];
+  targetUrl: string;
+  priority: string;
+  objective: string;
+  expectedResult: string;
+  severityHint: string;
+  plannedSteps: string[];
+  plannedProbeKinds: string[];
+  memoryHitCount: number;
+  memoryIssueTypes: string[];
+  memoryPageRoles: string[];
+  memoryComponentTypes: string[];
+  memoryInteractionKinds: string[];
+  memoryLayoutSignals: string[];
+  memoryFrameworkHints: string[];
+  memoryCardIds: string[];
 };
 
 type ProbeRectView = {
@@ -108,11 +123,65 @@ type WorkflowNode = {
   state: string;
 };
 
+type MemoryQueryHintsView = {
+  platform: string;
+  pageRoles: string[];
+  componentTypes: string[];
+  interactionKinds: string[];
+  layoutSignals: string[];
+  frameworkHints: string[];
+};
+
+type MemoryRetrievalHitView = {
+  cardId: string;
+  memoryId: string;
+  score: number;
+  baseScore: number;
+  metadataBoost: number;
+  summary: string;
+  issueTypes: string[];
+  pageRoles: string[];
+  componentTypes: string[];
+  interactionKinds: string[];
+  layoutSignals: string[];
+  frameworkHints: string[];
+  sectionHint: string;
+  severityHint: string;
+  scoreBreakdown: Record<string, number>;
+  observation: string;
+  expectedBehavior: string;
+};
+
+type MemoryRetrievalView = {
+  enabled: boolean;
+  backend: string;
+  queryText: string;
+  topK: number;
+  totalHits: number;
+  issueTypeCounts: Array<[string, number]>;
+  queryHints: MemoryQueryHintsView;
+  hits: MemoryRetrievalHitView[];
+  reason: string;
+};
+
 const PASS_CASES_PER_PAGE = 5;
 const TEXT_ARTIFACT_EXTENSIONS = new Set(["json", "txt", "log", "md", "csv", "yml", "yaml", "html"]);
 
 function fmtNumber(value: number | string | null | undefined): string {
   return Number(value ?? 0).toLocaleString("en-US");
+}
+
+function fmtScore(value: number | string | null | undefined): string {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? number.toFixed(3) : "0.000";
+}
+
+function fmtSignedScore(value: number | string | null | undefined): string {
+  const number = Number(value ?? 0);
+  if (!Number.isFinite(number)) {
+    return "0.000";
+  }
+  return `${number >= 0 ? "+" : ""}${number.toFixed(3)}`;
 }
 
 function fmtTime(value: string | null | undefined): string {
@@ -178,6 +247,22 @@ function asStringList(value: unknown): string[] {
     : [];
 }
 
+function asNumber(value: unknown): number {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function asNumberRecord(value: unknown): Record<string, number> {
+  if (typeof value !== "object" || value === null) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, raw]) => [String(key).trim(), asNumber(raw)] as const)
+      .filter(([key]) => key.length > 0),
+  );
+}
+
 function countItems(value: unknown): number {
   return Array.isArray(value) ? value.length : 0;
 }
@@ -217,21 +302,147 @@ function asFindings(runDetail: RunDetail | null): QaFinding[] {
   return [];
 }
 
-function asTestCases(value: unknown): TestCaseView[] {
-  if (!Array.isArray(value)) {
-    return [];
+function asMemoryRetrieval(runDetail: RunDetail | null): MemoryRetrievalView | null {
+  if (!runDetail) {
+    return null;
   }
-  return value
-    .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
-    .map((item, index) => ({
-      caseId: String(item.case_id ?? `TC-${String(index + 1).padStart(4, "0")}`),
-      title: String(item.title ?? "-"),
-      reason: String(item.status_reason ?? "-"),
+  const payload = asObject(runDetail.artifacts.memory_retrieval);
+  if (Object.keys(payload).length === 0) {
+    return null;
+  }
+  const queryHints = asObject(payload.query_hints);
+  const issueTypeCounts = Object.entries(asNumberRecord(payload.issue_type_counts)).sort((left, right) => right[1] - left[1]);
+  const hits = Array.isArray(payload.hits)
+    ? payload.hits
+        .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+        .map((item) => ({
+          cardId: String(item.card_id ?? "").trim(),
+          memoryId: String(item.memory_id ?? "").trim(),
+          score: asNumber(item.score),
+          baseScore: asNumber(item.base_score),
+          metadataBoost: asNumber(item.metadata_boost),
+          summary: String(item.summary ?? "").trim(),
+          issueTypes: asStringList(item.issue_types),
+          pageRoles: asStringList(item.page_roles),
+          componentTypes: asStringList(item.component_types),
+          interactionKinds: asStringList(item.interaction_kinds),
+          layoutSignals: asStringList(item.layout_signals),
+          frameworkHints: asStringList(item.framework_hints),
+          sectionHint: String(item.section_hint ?? "").trim(),
+          severityHint: String(item.severity_hint ?? "").trim(),
+          scoreBreakdown: asNumberRecord(item.score_breakdown),
+          observation: String(item.observation ?? "").trim(),
+          expectedBehavior: String(item.expected_behavior ?? "").trim(),
+        }))
+    : [];
+
+  return {
+    enabled: Boolean(payload.enabled),
+    backend: String(payload.backend ?? "").trim(),
+    queryText: String(payload.query_text ?? "").trim(),
+    topK: asNumber(payload.top_k),
+    totalHits: asNumber(payload.total_hits),
+    issueTypeCounts,
+    queryHints: {
+      platform: String(queryHints.platform ?? "").trim(),
+      pageRoles: asStringList(queryHints.page_roles),
+      componentTypes: asStringList(queryHints.component_types),
+      interactionKinds: asStringList(queryHints.interaction_kinds),
+      layoutSignals: asStringList(queryHints.layout_signals),
+      frameworkHints: asStringList(queryHints.framework_hints),
+    },
+    hits,
+    reason: String(payload.reason ?? "").trim(),
+  };
+}
+
+function asTestCases(resultsValue: unknown, planValue: unknown): TestCaseView[] {
+  const planRows = Array.isArray(planValue)
+    ? planValue.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    : [];
+  const resultsRows = Array.isArray(resultsValue)
+    ? resultsValue.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+    : [];
+
+  const planByCaseId = new Map<string, Record<string, unknown>>();
+  planRows.forEach((item, index) => {
+    const caseId = String(item.case_id ?? `TC-${String(index + 1).padStart(4, "0")}`).trim();
+    planByCaseId.set(caseId, item);
+  });
+
+  const mergedCases: TestCaseView[] = resultsRows.map((item, index) => {
+    const caseId = String(item.case_id ?? `TC-${String(index + 1).padStart(4, "0")}`).trim();
+    const plan = asObject(planByCaseId.get(caseId));
+    const memoryHints = asObject(plan.memory_hints);
+    const visualProbePlan = asObject(plan.visual_probe_plan);
+    const memoryHits = Array.isArray(memoryHints.hits)
+      ? memoryHints.hits.filter((hit): hit is Record<string, unknown> => typeof hit === "object" && hit !== null)
+      : [];
+
+    return {
+      caseId,
+      title: String(plan.title ?? item.title ?? "-"),
+      reason: String(item.status_reason ?? plan.reason ?? "-"),
       status: String(item.status ?? ""),
-      tier: String(item.execution_tier ?? item.tier ?? "-"),
-      stepsExecuted: Number(item.steps_executed ?? 0),
+      tier: String(plan.execution_tier ?? item.execution_tier ?? item.tier ?? "-"),
+      stepsExecuted: asNumber(item.steps_executed),
       evidenceRefs: asStringList(item.evidence_refs),
-    }));
+      targetUrl: String(plan.target_url ?? item.target_url ?? ""),
+      priority: String(plan.priority ?? "-"),
+      objective: String(plan.objective ?? ""),
+      expectedResult: String(plan.expected_result ?? ""),
+      severityHint: String(plan.severity_hint ?? ""),
+      plannedSteps: asStringList(plan.steps),
+      plannedProbeKinds: asStringList(visualProbePlan.probe_kinds),
+      memoryHitCount: asNumber(memoryHints.hit_count),
+      memoryIssueTypes: asStringList(memoryHints.issue_types),
+      memoryPageRoles: asStringList(memoryHints.page_roles),
+      memoryComponentTypes: asStringList(memoryHints.component_types),
+      memoryInteractionKinds: asStringList(memoryHints.interaction_kinds),
+      memoryLayoutSignals: asStringList(memoryHints.layout_signals),
+      memoryFrameworkHints: asStringList(memoryHints.framework_hints),
+      memoryCardIds: memoryHits.map((hit) => String(hit.card_id ?? "").trim()).filter(Boolean),
+    };
+  });
+
+  const seenCaseIds = new Set(mergedCases.map((item) => item.caseId));
+  planRows.forEach((item, index) => {
+    const caseId = String(item.case_id ?? `TC-${String(index + 1).padStart(4, "0")}`).trim();
+    if (seenCaseIds.has(caseId)) {
+      return;
+    }
+    const memoryHints = asObject(item.memory_hints);
+    const visualProbePlan = asObject(item.visual_probe_plan);
+    const memoryHits = Array.isArray(memoryHints.hits)
+      ? memoryHints.hits.filter((hit): hit is Record<string, unknown> => typeof hit === "object" && hit !== null)
+      : [];
+    mergedCases.push({
+      caseId,
+      title: String(item.title ?? "-"),
+      reason: String(item.reason ?? "-"),
+      status: "planned",
+      tier: String(item.execution_tier ?? item.tier ?? "-"),
+      stepsExecuted: 0,
+      evidenceRefs: [],
+      targetUrl: String(item.target_url ?? ""),
+      priority: String(item.priority ?? "-"),
+      objective: String(item.objective ?? ""),
+      expectedResult: String(item.expected_result ?? ""),
+      severityHint: String(item.severity_hint ?? ""),
+      plannedSteps: asStringList(item.steps),
+      plannedProbeKinds: asStringList(visualProbePlan.probe_kinds),
+      memoryHitCount: asNumber(memoryHints.hit_count),
+      memoryIssueTypes: asStringList(memoryHints.issue_types),
+      memoryPageRoles: asStringList(memoryHints.page_roles),
+      memoryComponentTypes: asStringList(memoryHints.component_types),
+      memoryInteractionKinds: asStringList(memoryHints.interaction_kinds),
+      memoryLayoutSignals: asStringList(memoryHints.layout_signals),
+      memoryFrameworkHints: asStringList(memoryHints.framework_hints),
+      memoryCardIds: memoryHits.map((hit) => String(hit.card_id ?? "").trim()).filter(Boolean),
+    });
+  });
+
+  return mergedCases;
 }
 
 function asProbeRect(value: unknown): ProbeRectView | null {
@@ -660,12 +871,14 @@ export default function App(): JSX.Element {
   const coverageSummary = asObject(qaReport.coverage_summary ?? qaReport.coverage);
   const tokenUsage = asObject(qaReport.token_usage);
   const testCaseResults = asObject(artifacts.test_case_results);
+  const testCasePlan = asObject(artifacts.test_cases);
   const visualProbes = asObject(artifacts.visual_probes);
   const executionLog = asObject(artifacts.execution_log);
+  const memoryRetrieval = asMemoryRetrieval(runDetail);
   const rawExecutionEvents = Array.isArray(executionLog.raw_events)
     ? executionLog.raw_events.map((item) => String(item ?? ""))
     : [];
-  const allTestCases = asTestCases(testCaseResults.results);
+  const allTestCases = asTestCases(testCaseResults.results, testCasePlan.test_cases);
   const caseSummary = pickCaseSummary(allTestCases, asObject(testCaseResults.summary));
   const visualProbeCases = asVisualProbeCases(visualProbes.results);
   const visualProbeSummary = pickVisualProbeSummary(asObject(qaReport.visual_probe_summary ?? visualProbes.summary), visualProbeCases);
@@ -687,6 +900,8 @@ export default function App(): JSX.Element {
   const pipelineTrace = runDetail?.pipeline_trace ?? [];
   const traceMap = useMemo(() => new Map(pipelineTrace.map((stage) => [stage.stage.toLowerCase(), stage])), [pipelineTrace]);
   const selectedPassCaseSteps = selectedPassCase ? extractCaseSteps(rawExecutionEvents, selectedPassCase.caseId) : [];
+  const selectedPassCaseStepList =
+    selectedPassCase && selectedPassCaseSteps.length === 0 ? selectedPassCase.plannedSteps : selectedPassCaseSteps;
   const selectedPassCaseEvidence = selectedPassCase
     ? selectedPassCase.evidenceRefs.map((ref) => resolveEvidenceRef(ref, runDetail?.files ?? []))
     : [];
@@ -1146,6 +1361,407 @@ export default function App(): JSX.Element {
                 </section>
 
                 <section className="detail-section">
+                  <h2>Memory Retrieval</h2>
+                  <p className="hint">
+                    Pattern-aware retrieval shows which past QA memories were pulled into planning and how much metadata reranking changed
+                    the final ordering.
+                  </p>
+                  {!memoryRetrieval ? (
+                    <div className="empty">memory_retrieval.json is missing or empty.</div>
+                  ) : (
+                    <div className="report-preview">
+                      <div className="report-grid">
+                        <section className="report-card">
+                          <div className="report-card-header">
+                            <h3>Retrieval Summary</h3>
+                            <span className={`pill ${memoryRetrieval.enabled ? "status-pass" : "status-review"}`}>
+                              {memoryRetrieval.enabled ? "enabled" : "disabled"}
+                            </span>
+                          </div>
+                          <table className="report-table">
+                            <tbody>
+                              <tr>
+                                <th>Backend</th>
+                                <td>{memoryRetrieval.backend || "-"}</td>
+                              </tr>
+                              <tr>
+                                <th>Top K</th>
+                                <td>{fmtNumber(memoryRetrieval.topK)}</td>
+                              </tr>
+                              <tr>
+                                <th>Total Hits</th>
+                                <td>{fmtNumber(memoryRetrieval.totalHits)}</td>
+                              </tr>
+                              <tr>
+                                <th>Issue Patterns</th>
+                                <td>{fmtNumber(memoryRetrieval.issueTypeCounts.length)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          <p className="report-note">{memoryRetrieval.reason || "No retrieval warning was recorded."}</p>
+                        </section>
+
+                        <section className="report-card">
+                          <h3>Query Text</h3>
+                          <p className="memory-query-text">{memoryRetrieval.queryText || "-"}</p>
+                        </section>
+
+                        <section className="report-card">
+                          <h3>Query Hints</h3>
+                          <div className="memory-hint-groups">
+                            {memoryRetrieval.queryHints.platform ? (
+                              <div className="memory-hint-group">
+                                <span>Platform</span>
+                                <ul className="tag-list">
+                                  <li>{memoryRetrieval.queryHints.platform}</li>
+                                </ul>
+                              </div>
+                            ) : null}
+
+                            {memoryRetrieval.queryHints.pageRoles.length > 0 ? (
+                              <div className="memory-hint-group">
+                                <span>Page Roles</span>
+                                <ul className="tag-list">
+                                  {memoryRetrieval.queryHints.pageRoles.map((value) => (
+                                    <li key={`query-role-${value}`}>{value}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+
+                            {memoryRetrieval.queryHints.componentTypes.length > 0 ? (
+                              <div className="memory-hint-group">
+                                <span>Components</span>
+                                <ul className="tag-list">
+                                  {memoryRetrieval.queryHints.componentTypes.map((value) => (
+                                    <li key={`query-component-${value}`}>{value}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+
+                            {memoryRetrieval.queryHints.interactionKinds.length > 0 ? (
+                              <div className="memory-hint-group">
+                                <span>Interactions</span>
+                                <ul className="tag-list">
+                                  {memoryRetrieval.queryHints.interactionKinds.map((value) => (
+                                    <li key={`query-interaction-${value}`}>{value}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+
+                            {memoryRetrieval.queryHints.layoutSignals.length > 0 ? (
+                              <div className="memory-hint-group">
+                                <span>Layout Signals</span>
+                                <ul className="tag-list">
+                                  {memoryRetrieval.queryHints.layoutSignals.map((value) => (
+                                    <li key={`query-layout-${value}`}>{value}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+
+                            {memoryRetrieval.queryHints.frameworkHints.length > 0 ? (
+                              <div className="memory-hint-group">
+                                <span>Framework</span>
+                                <ul className="tag-list">
+                                  {memoryRetrieval.queryHints.frameworkHints.map((value) => (
+                                    <li key={`query-framework-${value}`}>{value}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+
+                            {memoryRetrieval.issueTypeCounts.length > 0 ? (
+                              <div className="memory-hint-group">
+                                <span>Retrieved Issue Patterns</span>
+                                <ul className="tag-list">
+                                  {memoryRetrieval.issueTypeCounts.map(([issueType, count]) => (
+                                    <li key={`issue-type-${issueType}`}>
+                                      {issueType} · {fmtNumber(count)}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+
+                            {!memoryRetrieval.queryHints.platform &&
+                            memoryRetrieval.queryHints.pageRoles.length === 0 &&
+                            memoryRetrieval.queryHints.componentTypes.length === 0 &&
+                            memoryRetrieval.queryHints.interactionKinds.length === 0 &&
+                            memoryRetrieval.queryHints.layoutSignals.length === 0 &&
+                            memoryRetrieval.queryHints.frameworkHints.length === 0 &&
+                            memoryRetrieval.issueTypeCounts.length === 0 ? (
+                              <div className="empty">No query hints were recorded for this run.</div>
+                            ) : null}
+                          </div>
+                        </section>
+                      </div>
+
+                      <section className="report-card">
+                        <div className="report-card-header">
+                          <h3>Top Memory Hits</h3>
+                          <span className="pill">top {fmtNumber(memoryRetrieval.hits.length)}</span>
+                        </div>
+                        {memoryRetrieval.hits.length === 0 ? (
+                          <div className="empty">No memory hits were returned for this run.</div>
+                        ) : (
+                          <div className="memory-hit-list">
+                            {memoryRetrieval.hits.map((hit) => {
+                              const scoreBreakdown = Object.entries(hit.scoreBreakdown).filter(([, value]) => Math.abs(Number(value)) > 0);
+                              return (
+                                <article key={hit.cardId || `${hit.memoryId}-${hit.summary}`} className="memory-hit-card">
+                                  <div className="memory-hit-head">
+                                    <div className="memory-hit-title">
+                                      <div className="memory-hit-pills">
+                                        <span className="pill">{hit.cardId || "-"}</span>
+                                        {hit.memoryId ? <span className="pill">{hit.memoryId}</span> : null}
+                                        {hit.severityHint ? <span className="pill">{hit.severityHint}</span> : null}
+                                      </div>
+                                      <strong>{hit.summary || hit.observation || "Untitled memory hit"}</strong>
+                                    </div>
+                                    <div className="memory-hit-scores">
+                                      <span className="pill">score {fmtScore(hit.score)}</span>
+                                      <span className="pill">vector {fmtScore(hit.baseScore)}</span>
+                                      <span className={`pill ${hit.metadataBoost > 0 ? "status-pass" : ""}`}>
+                                        boost {fmtSignedScore(hit.metadataBoost)}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {hit.sectionHint ? <p className="memory-hit-section">Section: {hit.sectionHint}</p> : null}
+                                  {hit.observation ? <p className="memory-hit-copy">{hit.observation}</p> : null}
+                                  {hit.expectedBehavior ? <p className="memory-hit-note">Expected: {hit.expectedBehavior}</p> : null}
+
+                                  <div className="memory-hit-meta">
+                                    {hit.issueTypes.length > 0 ? (
+                                      <div className="memory-meta-group">
+                                        <span>Issue Types</span>
+                                        <ul className="tag-list">
+                                          {hit.issueTypes.map((value) => (
+                                            <li key={`${hit.cardId}-issue-${value}`}>{value}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+
+                                    {hit.pageRoles.length > 0 ? (
+                                      <div className="memory-meta-group">
+                                        <span>Page Roles</span>
+                                        <ul className="tag-list">
+                                          {hit.pageRoles.map((value) => (
+                                            <li key={`${hit.cardId}-role-${value}`}>{value}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+
+                                    {hit.componentTypes.length > 0 ? (
+                                      <div className="memory-meta-group">
+                                        <span>Components</span>
+                                        <ul className="tag-list">
+                                          {hit.componentTypes.map((value) => (
+                                            <li key={`${hit.cardId}-component-${value}`}>{value}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+
+                                    {hit.interactionKinds.length > 0 ? (
+                                      <div className="memory-meta-group">
+                                        <span>Interactions</span>
+                                        <ul className="tag-list">
+                                          {hit.interactionKinds.map((value) => (
+                                            <li key={`${hit.cardId}-interaction-${value}`}>{value}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+
+                                    {hit.layoutSignals.length > 0 ? (
+                                      <div className="memory-meta-group">
+                                        <span>Layout Signals</span>
+                                        <ul className="tag-list">
+                                          {hit.layoutSignals.map((value) => (
+                                            <li key={`${hit.cardId}-layout-${value}`}>{value}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+
+                                    {hit.frameworkHints.length > 0 ? (
+                                      <div className="memory-meta-group">
+                                        <span>Framework</span>
+                                        <ul className="tag-list">
+                                          {hit.frameworkHints.map((value) => (
+                                            <li key={`${hit.cardId}-framework-${value}`}>{value}</li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+
+                                    {scoreBreakdown.length > 0 ? (
+                                      <div className="memory-meta-group">
+                                        <span>Metadata Boost Breakdown</span>
+                                        <ul className="tag-list">
+                                          {scoreBreakdown.map(([label, value]) => (
+                                            <li key={`${hit.cardId}-boost-${label}`}>
+                                              {label} {fmtSignedScore(value)}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </article>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </section>
+                    </div>
+                  )}
+                </section>
+
+                <section className="detail-section">
+                  <h2>Test Case Plan</h2>
+                  <p className="hint">
+                    Each card merges planned case data with execution results so you can see why a case was assigned to deep, hover, or
+                    clickability-oriented checks.
+                  </p>
+                  {allTestCases.length === 0 ? (
+                    <div className="empty">No merged test case plan was available for this run.</div>
+                  ) : (
+                    <div className="test-case-plan-grid">
+                      {allTestCases.map((testCase) => (
+                        <article key={testCase.caseId} className="test-case-plan-card">
+                          <div className="test-case-plan-head">
+                            <div className="test-case-plan-title">
+                              <div className="test-case-plan-pills">
+                                <span className="pill">{testCase.caseId}</span>
+                                <span className={`pill ${statusClass(testCase.status)}`}>{testCase.status || "-"}</span>
+                                <span className="pill">{testCase.tier || "-"}</span>
+                                {testCase.priority && testCase.priority !== "-" ? <span className="pill">{testCase.priority}</span> : null}
+                                {testCase.severityHint ? <span className="pill">{testCase.severityHint}</span> : null}
+                              </div>
+                              <strong>{testCase.title}</strong>
+                            </div>
+                            <div className="test-case-plan-meta">
+                              <span className="pill">planned probes {fmtNumber(testCase.plannedProbeKinds.length)}</span>
+                              <span className="pill">memory hits {fmtNumber(testCase.memoryHitCount)}</span>
+                            </div>
+                          </div>
+
+                          {testCase.targetUrl ? <p className="test-case-plan-url">{testCase.targetUrl}</p> : null}
+                          {testCase.objective ? <p className="test-case-plan-copy">{testCase.objective}</p> : null}
+
+                          {testCase.plannedProbeKinds.length > 0 ? (
+                            <div className="memory-meta-group">
+                              <span>Planned Probes</span>
+                              <ul className="tag-list">
+                                {testCase.plannedProbeKinds.map((value) => (
+                                  <li key={`${testCase.caseId}-probe-${value}`}>{prettifyProbeKind(value)}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {testCase.memoryIssueTypes.length > 0 ? (
+                            <div className="memory-meta-group">
+                              <span>Memory Issue Types</span>
+                              <ul className="tag-list">
+                                {testCase.memoryIssueTypes.map((value) => (
+                                  <li key={`${testCase.caseId}-memory-issue-${value}`}>{value}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {testCase.memoryPageRoles.length > 0 ? (
+                            <div className="memory-meta-group">
+                              <span>Memory Page Roles</span>
+                              <ul className="tag-list">
+                                {testCase.memoryPageRoles.map((value) => (
+                                  <li key={`${testCase.caseId}-memory-role-${value}`}>{value}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {testCase.memoryComponentTypes.length > 0 ? (
+                            <div className="memory-meta-group">
+                              <span>Memory Components</span>
+                              <ul className="tag-list">
+                                {testCase.memoryComponentTypes.map((value) => (
+                                  <li key={`${testCase.caseId}-memory-component-${value}`}>{value}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {testCase.memoryInteractionKinds.length > 0 ? (
+                            <div className="memory-meta-group">
+                              <span>Memory Interactions</span>
+                              <ul className="tag-list">
+                                {testCase.memoryInteractionKinds.map((value) => (
+                                  <li key={`${testCase.caseId}-memory-interaction-${value}`}>{value}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {testCase.memoryLayoutSignals.length > 0 ? (
+                            <div className="memory-meta-group">
+                              <span>Memory Layout Signals</span>
+                              <ul className="tag-list">
+                                {testCase.memoryLayoutSignals.map((value) => (
+                                  <li key={`${testCase.caseId}-memory-layout-${value}`}>{value}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {testCase.memoryFrameworkHints.length > 0 ? (
+                            <div className="memory-meta-group">
+                              <span>Memory Framework</span>
+                              <ul className="tag-list">
+                                {testCase.memoryFrameworkHints.map((value) => (
+                                  <li key={`${testCase.caseId}-memory-framework-${value}`}>{value}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          {testCase.memoryCardIds.length > 0 ? (
+                            <div className="memory-meta-group">
+                              <span>Retrieved Cards</span>
+                              <ul className="tag-list">
+                                {testCase.memoryCardIds.slice(0, 4).map((value) => (
+                                  <li key={`${testCase.caseId}-memory-card-${value}`}>{value}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          ) : null}
+
+                          <div className="test-case-plan-actions">
+                            <button
+                              type="button"
+                              className="page-button"
+                              onClick={() => {
+                                setSelectedPassCase(testCase);
+                              }}
+                            >
+                              Open Case Detail
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <section className="detail-section">
                   <h2>Visual Probes</h2>
                   <p className="hint">
                     Deterministic scroll, hover, and clickability probes run alongside the execution agent to verify visible interaction
@@ -1435,6 +2051,8 @@ export default function App(): JSX.Element {
                             <span className="pill">{testCase.tier}</span>
                             <span className="pill">{fmtNumber(testCase.stepsExecuted)} steps</span>
                             <span className="pill">{fmtNumber(testCase.evidenceRefs.length)} evidences</span>
+                            <span className="pill">{fmtNumber(testCase.plannedProbeKinds.length)} probes</span>
+                            <span className="pill">{fmtNumber(testCase.memoryHitCount)} memory hits</span>
                           </div>
                         </div>
                         <div className="pass-case-body">
@@ -1544,7 +2162,11 @@ export default function App(): JSX.Element {
           >
             <div className="quicklook-head">
               <div>
-                <span className="pill">{selectedPassCase.caseId}</span>
+                <div className="memory-hit-pills">
+                  <span className="pill">{selectedPassCase.caseId}</span>
+                  <span className={`pill ${statusClass(selectedPassCase.status)}`}>{selectedPassCase.status || "-"}</span>
+                  <span className="pill">{selectedPassCase.tier}</span>
+                </div>
                 <h2>{selectedPassCase.title}</h2>
               </div>
               <button type="button" className="quicklook-close" onClick={() => setSelectedPassCase(null)}>
@@ -1554,15 +2176,23 @@ export default function App(): JSX.Element {
 
             <div className="quicklook-grid">
               <section className="quicklook-card">
-                <h3>Pass Summary</h3>
+                <h3>Case Summary</h3>
                 <dl className="quicklook-meta">
                   <div>
                     <dt>Tier</dt>
                     <dd>{selectedPassCase.tier}</dd>
                   </div>
                   <div>
-                    <dt>Why It Passed</dt>
+                    <dt>Status</dt>
+                    <dd>{selectedPassCase.status || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Status Reason</dt>
                     <dd>{selectedPassCase.reason}</dd>
+                  </div>
+                  <div>
+                    <dt>Priority</dt>
+                    <dd>{selectedPassCase.priority || "-"}</dd>
                   </div>
                   <div>
                     <dt>Step Count</dt>
@@ -1572,20 +2202,134 @@ export default function App(): JSX.Element {
                     <dt>Evidence Count</dt>
                     <dd>{fmtNumber(selectedPassCase.evidenceRefs.length)}</dd>
                   </div>
+                  <div>
+                    <dt>Target URL</dt>
+                    <dd>{selectedPassCase.targetUrl || "-"}</dd>
+                  </div>
                 </dl>
               </section>
 
               <section className="quicklook-card">
                 <h3>Steps</h3>
-                {selectedPassCaseSteps.length === 0 ? (
-                  <div className="empty">No execution steps matched this test case.</div>
+                {selectedPassCaseStepList.length === 0 ? (
+                  <div className="empty">No execution or planned steps were recorded for this test case.</div>
                 ) : (
                   <ol className="quicklook-list">
-                    {selectedPassCaseSteps.map((step, index) => (
+                    {selectedPassCaseStepList.map((step, index) => (
                       <li key={`${selectedPassCase.caseId}-step-${index}`}>{step}</li>
                     ))}
                   </ol>
                 )}
+              </section>
+
+              <section className="quicklook-card">
+                <h3>Planning & Memory</h3>
+                <dl className="quicklook-meta">
+                  <div>
+                    <dt>Objective</dt>
+                    <dd>{selectedPassCase.objective || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Expected Result</dt>
+                    <dd>{selectedPassCase.expectedResult || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Severity Hint</dt>
+                    <dd>{selectedPassCase.severityHint || "-"}</dd>
+                  </div>
+                  <div>
+                    <dt>Memory Hit Count</dt>
+                    <dd>{fmtNumber(selectedPassCase.memoryHitCount)}</dd>
+                  </div>
+                </dl>
+
+                {selectedPassCase.plannedProbeKinds.length > 0 ? (
+                  <div className="memory-meta-group">
+                    <span>Planned Probes</span>
+                    <ul className="tag-list">
+                      {selectedPassCase.plannedProbeKinds.map((value) => (
+                        <li key={`${selectedPassCase.caseId}-modal-probe-${value}`}>{prettifyProbeKind(value)}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {selectedPassCase.memoryIssueTypes.length > 0 ? (
+                  <div className="memory-meta-group">
+                    <span>Memory Issue Types</span>
+                    <ul className="tag-list">
+                      {selectedPassCase.memoryIssueTypes.map((value) => (
+                        <li key={`${selectedPassCase.caseId}-modal-memory-issue-${value}`}>{value}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {selectedPassCase.memoryPageRoles.length > 0 ? (
+                  <div className="memory-meta-group">
+                    <span>Page Roles</span>
+                    <ul className="tag-list">
+                      {selectedPassCase.memoryPageRoles.map((value) => (
+                        <li key={`${selectedPassCase.caseId}-modal-role-${value}`}>{value}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {selectedPassCase.memoryComponentTypes.length > 0 ? (
+                  <div className="memory-meta-group">
+                    <span>Components</span>
+                    <ul className="tag-list">
+                      {selectedPassCase.memoryComponentTypes.map((value) => (
+                        <li key={`${selectedPassCase.caseId}-modal-component-${value}`}>{value}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {selectedPassCase.memoryInteractionKinds.length > 0 ? (
+                  <div className="memory-meta-group">
+                    <span>Interactions</span>
+                    <ul className="tag-list">
+                      {selectedPassCase.memoryInteractionKinds.map((value) => (
+                        <li key={`${selectedPassCase.caseId}-modal-interaction-${value}`}>{value}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {selectedPassCase.memoryLayoutSignals.length > 0 ? (
+                  <div className="memory-meta-group">
+                    <span>Layout Signals</span>
+                    <ul className="tag-list">
+                      {selectedPassCase.memoryLayoutSignals.map((value) => (
+                        <li key={`${selectedPassCase.caseId}-modal-layout-${value}`}>{value}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {selectedPassCase.memoryFrameworkHints.length > 0 ? (
+                  <div className="memory-meta-group">
+                    <span>Framework</span>
+                    <ul className="tag-list">
+                      {selectedPassCase.memoryFrameworkHints.map((value) => (
+                        <li key={`${selectedPassCase.caseId}-modal-framework-${value}`}>{value}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {selectedPassCase.memoryCardIds.length > 0 ? (
+                  <div className="memory-meta-group">
+                    <span>Retrieved Cards</span>
+                    <ul className="tag-list">
+                      {selectedPassCase.memoryCardIds.map((value) => (
+                        <li key={`${selectedPassCase.caseId}-modal-memory-card-${value}`}>{value}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </section>
 
               <section className="quicklook-card evidence-card">

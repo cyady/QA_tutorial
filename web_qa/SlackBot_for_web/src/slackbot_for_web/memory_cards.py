@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -72,6 +73,13 @@ EXPECTED_BEHAVIOR_BY_ISSUE: dict[str, str] = {
 @dataclass(frozen=True)
 class IssueRule:
     issue_type: str
+    match_any: tuple[str, ...]
+    match_all: tuple[tuple[str, ...], ...] = ()
+
+
+@dataclass(frozen=True)
+class PatternRule:
+    value: str
     match_any: tuple[str, ...]
     match_all: tuple[tuple[str, ...], ...] = ()
 
@@ -167,6 +175,108 @@ ISSUE_RULES: tuple[IssueRule, ...] = (
         match_any=("파비콘", "favicon"),
     ),
 )
+
+PAGE_ROLE_RULES: tuple[PatternRule, ...] = (
+    PatternRule("landing", ("home", "homepage", "메인", "랜딩", "hero", "first view")),
+    PatternRule("pricing", ("pricing", "price", "prices", "요금", "가격", "플랜")),
+    PatternRule("product", ("product", "products", "solution", "solutions", "service", "services", "feature")),
+    PatternRule("about", ("about", "company", "회사", "브랜드 소개", "브랜드")),
+    PatternRule("contact", ("contact", "문의", "상담", "consult", "demo request", "문의하기")),
+    PatternRule("faq", ("faq", "자주 묻는", "질문", "accordion")),
+    PatternRule("blog", ("blog", "news", "article", "post", "insight", "stories")),
+    PatternRule("docs", ("docs", "documentation", "guide", "help", "문서", "가이드")),
+    PatternRule("careers", ("careers", "career", "jobs", "job", "채용", "join us")),
+    PatternRule("form_page", ("form", "input", "신청", "접수", "상담폼", "문의폼", "lead form")),
+    PatternRule("policy", ("privacy", "terms", "policy", "개인정보", "이용약관")),
+)
+
+COMPONENT_TYPE_RULES: tuple[PatternRule, ...] = (
+    PatternRule("header_nav", ("header", "gnb", "lnb", "nav", "menu", "메뉴")),
+    PatternRule("footer_nav", ("footer", "푸터", "하단", "ci")),
+    PatternRule("hero_cta", ("hero", "kv", "메인 비주얼", "퍼스트뷰")),
+    PatternRule("primary_cta", ("cta", "문의", "상담", "demo", "trial", "download", "리포트", "자료")),
+    PatternRule("floating_cta", ("floating cta", "플로팅 cta", "sticky cta", "sticky", "floating")),
+    PatternRule("lead_form", ("form", "input", "placeholder", "label", "문의폼", "상담폼", "신청폼")),
+    PatternRule("modal", ("modal", "popup", "팝업", "overlay", "drawer")),
+    PatternRule("accordion", ("accordion", "faq", "토글", "접힘", "펼침")),
+    PatternRule("card_grid", ("card", "cards", "카드")),
+    PatternRule("carousel", ("carousel", "slider", "슬라이더", "swiper")),
+    PatternRule("video_player", ("video", "동영상", "player", "플레이어", "youtube")),
+    PatternRule("share_meta", ("공유 링크", "preview", "og image", "미리보기", "thumbnail")),
+    PatternRule("tabs", ("tab", "tabs", "탭")),
+    PatternRule("close_control", ("닫기", "close", "x 버튼", "[x]")),
+)
+
+INTERACTION_KIND_RULES: tuple[PatternRule, ...] = (
+    PatternRule("scroll_triggered_animation", ("스크롤", "scroll", "애니메이션", "animation")),
+    PatternRule("hover_navigation", ("hover", "dropdown", "popover", "tooltip", "menu hover")),
+    PatternRule("click_navigation", ("클릭", "click", "버튼", "cta", "링크")),
+    PatternRule("external_navigation", ("새창", "새 창", "현재창", "external", "외부 링크")),
+    PatternRule("modal_toggle", ("modal", "popup", "drawer", "닫기", "close")),
+    PatternRule("form_interaction", ("form", "input", "label", "placeholder", "validation", "신청", "문의")),
+    PatternRule("accordion_toggle", ("faq", "accordion", "toggle", "접힘", "펼침")),
+    PatternRule("media_playback", ("video", "player", "play", "동영상")),
+    PatternRule("share_preview", ("공유", "preview", "og", "meta")),
+)
+
+LAYOUT_SIGNAL_RULES: tuple[PatternRule, ...] = (
+    PatternRule("overlay_depth", ("depth", "z-index", "overlay")),
+    PatternRule("alignment", ("정렬", "안맞", "안 맞", "쏠림", "치우침", "기준선")),
+    PatternRule("spacing", ("여백", "간격", "spacing", "padding", "margin")),
+    PatternRule("text_wrap", ("줄바꿈", "줄 바꿈", "가독성", "말풍선")),
+    PatternRule("image_crop", ("잘림", "짤림", "겹쳐", "이미지 영역 콘텐츠 없음")),
+    PatternRule("viewport_overflow", ("가려짐", "좁아", "작아", "overflow", "responsive")),
+    PatternRule("animation_stability", ("깜빡", "재실행", "버벅", "끊기", "성능")),
+    PatternRule("visibility", ("안 보", "안보", "미노출", "숨겨", "노출되지")),
+)
+
+FRAMEWORK_HINT_RULES: tuple[PatternRule, ...] = (
+    PatternRule("framer", ("framer", "framer.app", ".framer.")),
+    PatternRule("webflow", ("webflow", "webflow.io")),
+    PatternRule("shopify", ("shopify", "myshopify")),
+    PatternRule("wordpress", ("wordpress", "wp-content", "wp-admin")),
+    PatternRule("nextjs", ("_next", "next.js", "nextjs")),
+)
+
+ISSUE_COMPONENT_TYPE_HINTS: dict[str, tuple[str, ...]] = {
+    "mobile_overlay_depth": ("floating_cta", "lead_form", "modal"),
+    "mobile_media_render": ("video_player",),
+    "menu_consistency": ("header_nav", "footer_nav"),
+    "share_preview": ("share_meta",),
+    "close_button": ("modal", "close_control"),
+    "click_affordance": ("primary_cta",),
+    "click_feedback": ("primary_cta",),
+    "footer_alignment": ("footer_nav",),
+    "branding_render": ("footer_nav", "card_grid"),
+    "broken_link": ("primary_cta",),
+}
+
+ISSUE_INTERACTION_KIND_HINTS: dict[str, tuple[str, ...]] = {
+    "animation_replay": ("scroll_triggered_animation",),
+    "flicker": ("scroll_triggered_animation",),
+    "performance_motion": ("scroll_triggered_animation",),
+    "broken_link": ("click_navigation", "external_navigation"),
+    "close_button": ("modal_toggle",),
+    "menu_consistency": ("hover_navigation", "click_navigation"),
+    "click_affordance": ("hover_navigation", "click_navigation"),
+    "click_feedback": ("click_navigation",),
+    "share_preview": ("share_preview",),
+    "mobile_media_render": ("media_playback",),
+    "mobile_overlay_depth": ("click_navigation", "form_interaction"),
+}
+
+ISSUE_LAYOUT_SIGNAL_HINTS: dict[str, tuple[str, ...]] = {
+    "mobile_overlay_depth": ("overlay_depth",),
+    "mobile_alignment": ("alignment",),
+    "spacing_layout": ("spacing",),
+    "text_wrap": ("text_wrap",),
+    "image_render": ("image_crop",),
+    "responsive_overflow": ("viewport_overflow",),
+    "animation_replay": ("animation_stability",),
+    "flicker": ("animation_stability",),
+    "performance_motion": ("animation_stability",),
+    "footer_alignment": ("alignment",),
+}
 
 ISSUE_TYPE_PRIORITY: tuple[str, ...] = (
     "close_button",
@@ -530,7 +640,40 @@ def _message_to_card(
     evidence_refs = _build_evidence_refs(message)
     summary = _build_summary(body_text)
     expected_behavior = _infer_expected_behavior(body_text, issue_types)
-    keywords = _extract_keywords(body_text, issue_types, platform, section_hint)
+    page_roles = _infer_page_roles(body_text, section_hint=section_hint, thread_context=thread_context)
+    framework_hints = _infer_framework_hints(body_text, thread_context=thread_context)
+    component_types = _infer_component_types(
+        body_text,
+        issue_types=issue_types,
+        section_hint=section_hint,
+        thread_context=thread_context,
+    )
+    interaction_kinds = _infer_interaction_kinds(
+        body_text,
+        issue_types=issue_types,
+        component_types=component_types,
+        thread_context=thread_context,
+    )
+    layout_signals = _infer_layout_signals(body_text, issue_types=issue_types, platform=platform)
+    pattern_tags = _build_pattern_tags(
+        page_roles=page_roles,
+        component_types=component_types,
+        interaction_kinds=interaction_kinds,
+        layout_signals=layout_signals,
+        framework_hints=framework_hints,
+        platform=platform,
+    )
+    keywords = _extract_keywords(
+        body_text,
+        issue_types=issue_types,
+        platform=platform,
+        section_hint=section_hint,
+        page_roles=page_roles,
+        component_types=component_types,
+        interaction_kinds=interaction_kinds,
+        layout_signals=layout_signals,
+        framework_hints=framework_hints,
+    )
     vector_text = _build_vector_text(
         summary=summary,
         observation=body_text,
@@ -539,6 +682,12 @@ def _message_to_card(
         section_hint=section_hint,
         expected_behavior=expected_behavior,
         thread_context=thread_context,
+        page_roles=page_roles,
+        component_types=component_types,
+        interaction_kinds=interaction_kinds,
+        layout_signals=layout_signals,
+        framework_hints=framework_hints,
+        pattern_tags=pattern_tags,
     )
 
     if issue_number is not None:
@@ -569,6 +718,12 @@ def _message_to_card(
         "issue_number": issue_number,
         "section_hint": section_hint,
         "issue_types": issue_types,
+        "page_roles": page_roles,
+        "component_types": component_types,
+        "interaction_kinds": interaction_kinds,
+        "layout_signals": layout_signals,
+        "framework_hints": framework_hints,
+        "pattern_tags": pattern_tags,
         "severity_hint": severity_hint,
         "summary": summary,
         "observation": body_text,
@@ -712,12 +867,128 @@ def _infer_expected_behavior(text: str, issue_types: list[str]) -> str:
     return ""
 
 
-def _extract_keywords(text: str, issue_types: list[str], platform: str, section_hint: str | None) -> list[str]:
+def _infer_page_roles(text: str, *, section_hint: str | None, thread_context: dict[str, Any]) -> list[str]:
+    context_text = _pattern_context_text(text, section_hint=section_hint, thread_context=thread_context)
+    route_tokens = _extract_route_tokens(thread_context)
+    page_roles: list[str] = []
+    for rule in PAGE_ROLE_RULES:
+        if _matches_pattern_rule(context_text, rule):
+            page_roles.append(rule.value)
+            continue
+        if any(token in rule.match_any for token in route_tokens):
+            page_roles.append(rule.value)
+    if not page_roles and _looks_like_landing_context(context_text, thread_context):
+        page_roles.append("landing")
+    return _dedupe_strings(page_roles, limit=6)
+
+
+def _infer_framework_hints(text: str, *, thread_context: dict[str, Any]) -> list[str]:
+    context_text = _pattern_context_text(text, section_hint=None, thread_context=thread_context)
+    framework_hints: list[str] = []
+    for rule in FRAMEWORK_HINT_RULES:
+        if _matches_pattern_rule(context_text, rule):
+            framework_hints.append(rule.value)
+    return _dedupe_strings(framework_hints, limit=4)
+
+
+def _infer_component_types(
+    text: str,
+    *,
+    issue_types: list[str],
+    section_hint: str | None,
+    thread_context: dict[str, Any],
+) -> list[str]:
+    context_text = _pattern_context_text(text, section_hint=section_hint, thread_context=thread_context)
+    component_types: list[str] = []
+    for issue_type in issue_types:
+        component_types.extend(ISSUE_COMPONENT_TYPE_HINTS.get(issue_type, ()))
+    for rule in COMPONENT_TYPE_RULES:
+        if _matches_pattern_rule(context_text, rule):
+            component_types.append(rule.value)
+    return _dedupe_strings(component_types, limit=8)
+
+
+def _infer_interaction_kinds(
+    text: str,
+    *,
+    issue_types: list[str],
+    component_types: list[str],
+    thread_context: dict[str, Any],
+) -> list[str]:
+    context_text = _pattern_context_text(text, section_hint=None, thread_context=thread_context)
+    interaction_kinds: list[str] = []
+    for issue_type in issue_types:
+        interaction_kinds.extend(ISSUE_INTERACTION_KIND_HINTS.get(issue_type, ()))
+    for rule in INTERACTION_KIND_RULES:
+        if _matches_pattern_rule(context_text, rule):
+            interaction_kinds.append(rule.value)
+    if any(component in {"modal", "close_control"} for component in component_types):
+        interaction_kinds.append("modal_toggle")
+    if any(component in {"lead_form"} for component in component_types):
+        interaction_kinds.append("form_interaction")
+    if any(component in {"accordion"} for component in component_types):
+        interaction_kinds.append("accordion_toggle")
+    if any(component in {"share_meta"} for component in component_types):
+        interaction_kinds.append("share_preview")
+    return _dedupe_strings(interaction_kinds, limit=8)
+
+
+def _infer_layout_signals(text: str, *, issue_types: list[str], platform: str) -> list[str]:
+    normalized = _normalize_match_text(text)
+    layout_signals: list[str] = []
+    for issue_type in issue_types:
+        layout_signals.extend(ISSUE_LAYOUT_SIGNAL_HINTS.get(issue_type, ()))
+    for rule in LAYOUT_SIGNAL_RULES:
+        if _matches_pattern_rule(normalized, rule):
+            layout_signals.append(rule.value)
+    if platform in {"mobile", "real_mobile", "tablet", "cross_viewport"}:
+        layout_signals.append("mobile_surface")
+    if platform in {"desktop", "cross_viewport"}:
+        layout_signals.append("desktop_surface")
+    return _dedupe_strings(layout_signals, limit=8)
+
+
+def _build_pattern_tags(
+    *,
+    page_roles: list[str],
+    component_types: list[str],
+    interaction_kinds: list[str],
+    layout_signals: list[str],
+    framework_hints: list[str],
+    platform: str,
+) -> list[str]:
+    tags: list[str] = []
+    tags.extend(f"role:{value}" for value in page_roles)
+    tags.extend(f"component:{value}" for value in component_types)
+    tags.extend(f"interaction:{value}" for value in interaction_kinds)
+    tags.extend(f"layout:{value}" for value in layout_signals)
+    tags.extend(f"framework:{value}" for value in framework_hints)
+    if platform and platform != "unspecified":
+        tags.append(f"platform:{platform}")
+    return _dedupe_strings(tags, limit=24)
+
+
+def _extract_keywords(
+    text: str,
+    issue_types: list[str],
+    platform: str,
+    section_hint: str | None,
+    page_roles: list[str],
+    component_types: list[str],
+    interaction_kinds: list[str],
+    layout_signals: list[str],
+    framework_hints: list[str],
+) -> list[str]:
     normalized = _normalize_match_text(text)
     tokens: list[str] = []
     if section_hint:
         tokens.append(section_hint)
     tokens.extend(issue_types)
+    tokens.extend(page_roles)
+    tokens.extend(component_types)
+    tokens.extend(interaction_kinds)
+    tokens.extend(layout_signals)
+    tokens.extend(framework_hints)
     if platform != "unspecified":
         tokens.append(platform)
     for issue_type in issue_types:
@@ -743,6 +1014,12 @@ def _build_vector_text(
     section_hint: str | None,
     expected_behavior: str,
     thread_context: dict[str, Any],
+    page_roles: list[str],
+    component_types: list[str],
+    interaction_kinds: list[str],
+    layout_signals: list[str],
+    framework_hints: list[str],
+    pattern_tags: list[str],
 ) -> str:
     parts = [
         summary,
@@ -752,6 +1029,18 @@ def _build_vector_text(
     ]
     if section_hint:
         parts.append(f"section: {section_hint}")
+    if page_roles:
+        parts.append(f"page_roles: {', '.join(page_roles)}")
+    if component_types:
+        parts.append(f"component_types: {', '.join(component_types)}")
+    if interaction_kinds:
+        parts.append(f"interaction_kinds: {', '.join(interaction_kinds)}")
+    if layout_signals:
+        parts.append(f"layout_signals: {', '.join(layout_signals)}")
+    if framework_hints:
+        parts.append(f"framework_hints: {', '.join(framework_hints)}")
+    if pattern_tags:
+        parts.append(f"pattern_tags: {', '.join(pattern_tags)}")
     if expected_behavior:
         parts.append(f"expected: {expected_behavior}")
     context_summary = str(thread_context.get("summary") or "").strip()
@@ -764,6 +1053,44 @@ def _build_vector_text(
     if context_labels:
         parts.append("thread_labels: " + ", ".join(context_labels))
     return "\n".join(part for part in parts if part).strip()
+
+
+def _pattern_context_text(text: str, *, section_hint: str | None, thread_context: dict[str, Any]) -> str:
+    fragments: list[str] = [text]
+    if section_hint:
+        fragments.append(section_hint)
+    fragments.append(str(thread_context.get("summary") or ""))
+    fragments.extend(_dedupe_strings(list(thread_context.get("labels") or []), limit=8))
+    fragments.extend(_dedupe_strings(list(thread_context.get("urls") or []), limit=8))
+    return _normalize_match_text("\n".join(fragment for fragment in fragments if fragment))
+
+
+def _extract_route_tokens(thread_context: dict[str, Any]) -> list[str]:
+    tokens: list[str] = []
+    for raw_url in _dedupe_strings(list(thread_context.get("urls") or []), limit=8):
+        parsed = urlparse(raw_url)
+        for chunk in re.split(r"[/_\-.]+", parsed.path.lower()):
+            cleaned = chunk.strip()
+            if len(cleaned) >= 2:
+                tokens.append(cleaned)
+    return _dedupe_strings(tokens, limit=20)
+
+
+def _matches_pattern_rule(text: str, rule: PatternRule) -> bool:
+    any_hit = any(keyword in text for keyword in rule.match_any)
+    all_hit = any(all(keyword in text for keyword in group) for group in rule.match_all) if rule.match_all else False
+    return any_hit or all_hit
+
+
+def _looks_like_landing_context(context_text: str, thread_context: dict[str, Any]) -> bool:
+    if any(keyword in context_text for keyword in ("랜딩", "메인", "hero", "homepage", "home")):
+        return True
+    for raw_url in _dedupe_strings(list(thread_context.get("urls") or []), limit=8):
+        parsed = urlparse(raw_url)
+        path = parsed.path.strip()
+        if not path or path == "/":
+            return True
+    return False
 
 
 def _extract_thread_context(messages: list[dict[str, Any]]) -> dict[str, Any]:

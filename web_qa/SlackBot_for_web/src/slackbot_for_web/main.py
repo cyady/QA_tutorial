@@ -22,6 +22,7 @@ def main() -> None:
     lock_handle = _acquire_single_instance_lock(project_root)
     dotenv_path = project_root / ".env"
     load_dotenv(dotenv_path=dotenv_path)
+    _configure_ssl_certificates()
     settings = load_settings()
     logging.getLogger(__name__).info("Loaded .env from %s", dotenv_path)
     logging.getLogger(__name__).info("Artifact root: %s", settings.artifact_root)
@@ -79,6 +80,18 @@ def _acquire_single_instance_lock(project_root: Path) -> IO[str]:
 
     atexit.register(_release)
     return handle
+
+
+def _configure_ssl_certificates() -> None:
+    if os.getenv("SSL_CERT_FILE") or os.getenv("REQUESTS_CA_BUNDLE"):
+        return
+    try:
+        import certifi  # pylint: disable=import-outside-toplevel
+    except Exception:
+        return
+    ca_bundle = certifi.where()
+    os.environ.setdefault("SSL_CERT_FILE", ca_bundle)
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", ca_bundle)
 
 
 if __name__ == "__main__":
